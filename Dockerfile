@@ -38,7 +38,6 @@
 ARG AIRFLOW_VERSION="2.2.5"
 ARG AIRFLOW_EXTRAS="async,celery,cncf.kubernetes,dask,docker,ftp,grpc,hashicorp,http,ldap,mysql,odbc,pandas,postgres,redis,sftp,ssh,statsd,virtualenv"
 ARG ADDITIONAL_AIRFLOW_EXTRAS=""
-ARG ADDITIONAL_PYTHON_DEPS="google-ads==15.1.1 google-api-python-client==2.37.0 scikit-learn==1.0.2 slack-sdk==3.14.1 pyjanitor==0.22.0 awesome-minio>=1.0.3 simplejson==3.17.6 glom==22.1.0 facebook-business==12.0.1"
 
 ARG AIRFLOW_HOME=/opt/airflow
 ARG AIRFLOW_UID="50000"
@@ -285,7 +284,7 @@ RUN if [[ ${AIRFLOW_INSTALLATION_METHOD} == "." ]]; then \
     fi;
 
 # Add extra python dependencies
-ARG ADDITIONAL_PYTHON_DEPS=""
+ARG ADDITIONAL_PYTHON_DEPS="google-ads==15.1.1 google-api-python-client==2.37.0 scikit-learn==1.0.2 slack-sdk==3.14.1 pyjanitor==0.22.0 awesome-minio>=1.0.3 simplejson==3.17.6 glom==22.1.0 facebook-business==12.0.1"
 # We can set this value to true in case we want to install .whl .tar.gz packages placed in the
 # docker-context-files folder. This can be done for both - additional packages you want to install
 # and for airflow as well (you have to set INSTALL_FROM_PYPI to false in this case)

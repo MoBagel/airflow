@@ -1561,3 +1561,13 @@ LABEL org.apache.airflow.distro="debian" \
   org.opencontainers.image.description="Reference, production-ready Apache Airflow image"
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint"]
 CMD []
+
+# Download & install gcloud cli
+RUN curl https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.tar.gz > /tmp/google-cloud-sdk.tar.gz
+USER root
+RUN mkdir -p /usr/local/gcloud \
+  && tar -C /usr/local/gcloud -xvf /tmp/google-cloud-sdk.tar.gz \
+  && /usr/local/gcloud/google-cloud-sdk/install.sh
+ENV PATH $PATH:/usr/local/gcloud/google-cloud-sdk/bin
+RUN gcloud components install kubectl
+RUN gcloud components install gke-gcloud-auth-plugin

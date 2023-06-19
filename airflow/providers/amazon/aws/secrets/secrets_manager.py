@@ -15,31 +15,25 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Objects relating to sourcing secrets from AWS Secrets Manager"""
+"""Objects relating to sourcing secrets from AWS Secrets Manager."""
+from __future__ import annotations
 
-import ast
 import json
 import re
 import warnings
-from typing import Optional
-from urllib.parse import urlencode
+from functools import cached_property
+from typing import Any
+from urllib.parse import unquote
 
-import boto3
-
-from airflow.compat.functools import cached_property
-from airflow.providers.amazon.aws.utils import get_airflow_version
+from airflow.exceptions import AirflowProviderDeprecationWarning
+from airflow.providers.amazon.aws.utils import trim_none_values
 from airflow.secrets import BaseSecretsBackend
 from airflow.utils.log.logging_mixin import LoggingMixin
 
 
-def _parse_version(val):
-    val = re.sub(r'(\d+\.\d+\.\d+).*', lambda x: x.group(1), val)
-    return tuple(int(x) for x in val.split('.'))
-
-
 class SecretsManagerBackend(BaseSecretsBackend, LoggingMixin):
     """
-    Retrieves Connection or Variables from AWS Secrets Manager
+    Retrieves Connection or Variables from AWS Secrets Manager.
 
     Configurable via ``airflow.cfg`` like so:
 
@@ -49,16 +43,28 @@ class SecretsManagerBackend(BaseSecretsBackend, LoggingMixin):
         backend = airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend
         backend_kwargs = {"connections_prefix": "airflow/connections"}
 
-    For example, if secrets prefix is ``airflow/connections/smtp_default``, this would be accessible
-    if you provide ``{"connections_prefix": "airflow/connections"}`` and request conn_id ``smtp_default``.
-    If variables prefix is ``airflow/variables/hello``, this would be accessible
-    if you provide ``{"variables_prefix": "airflow/variables"}`` and request variable key ``hello``.
-    And if config_prefix is ``airflow/config/sql_alchemy_conn``, this would be accessible
-    if you provide ``{"config_prefix": "airflow/config"}`` and request config
-    key ``sql_alchemy_conn``.
+    For example, when ``{"connections_prefix": "airflow/connections"}`` is set, if a secret is defined with
+    the path ``airflow/connections/smtp_default``, the connection with conn_id ``smtp_default`` would be
+    accessible.
 
-    You can also pass additional keyword arguments like ``aws_secret_access_key``, ``aws_access_key_id``
-    or ``region_name`` to this class and they would be passed on to Boto3 client.
+    When ``{"variables_prefix": "airflow/variables"}`` is set, if a secret is defined with
+    the path ``airflow/variables/hello``, the variable with the name ``hello`` would be accessible.
+
+    When ``{"config_prefix": "airflow/config"}`` set, if a secret is defined with
+    the path ``airflow/config/sql_alchemy_conn``, the config with they ``sql_alchemy_conn`` would be
+    accessible.
+
+    You can also pass additional keyword arguments listed in AWS Connection Extra config
+    to this class, and they would be used for establishing a connection and passed on to Boto3 client.
+
+    .. code-block:: ini
+
+        [secrets]
+        backend = airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend
+        backend_kwargs = {"connections_prefix": "airflow/connections", "region_name": "eu-west-1"}
+
+    .. seealso::
+        :ref:`howto/connection:aws:configuring-the-connection`
 
     There are two ways of storing secrets in Secret Manager for using them with this operator:
     storing them as a conn URI in one field, or taking advantage of native approach of Secrets Manager
@@ -68,7 +74,7 @@ class SecretsManagerBackend(BaseSecretsBackend, LoggingMixin):
     .. code-block:: python
 
         possible_words_for_conn_fields = {
-            "user": ["user", "username", "login", "user_name"],
+            "login": ["login", "user", "username", "user_name"],
             "password": ["password", "pass", "key"],
             "host": ["host", "remote_host", "server"],
             "port": ["port"],
@@ -83,17 +89,25 @@ class SecretsManagerBackend(BaseSecretsBackend, LoggingMixin):
     :param connections_prefix: Specifies the prefix of the secret to read to get Connections.
         If set to None (null value in the configuration), requests for connections will not be
         sent to AWS Secrets Manager. If you don't want a connections_prefix, set it as an empty string
+    :param connections_lookup_pattern: Specifies a pattern the connection ID needs to match to be looked up in
+        AWS Secrets Manager. Applies only if `connections_prefix` is not None.
+        If set to None (null value in the configuration), all connections will be looked up first in
+        AWS Secrets Manager.
     :param variables_prefix: Specifies the prefix of the secret to read to get Variables.
         If set to None (null value in the configuration), requests for variables will not be sent to
         AWS Secrets Manager. If you don't want a variables_prefix, set it as an empty string
+    :param variables_lookup_pattern: Specifies a pattern the variable key needs to match to be looked up in
+        AWS Secrets Manager. Applies only if `variables_prefix` is not None.
+        If set to None (null value in the configuration), all variables will be looked up first in
+        AWS Secrets Manager.
     :param config_prefix: Specifies the prefix of the secret to read to get Configurations.
         If set to None (null value in the configuration), requests for configurations will not be sent to
         AWS Secrets Manager. If you don't want a config_prefix, set it as an empty string
-    :param profile_name: The name of a profile to use. If not given, then the default profile is used.
+    :param config_lookup_pattern: Specifies a pattern the config key needs to match to be looked up in
+        AWS Secrets Manager. Applies only if `config_prefix` is not None.
+        If set to None (null value in the configuration), all config keys will be looked up first in
+        AWS Secrets Manager.
     :param sep: separator used to concatenate secret_prefix and secret_id. Default: "/"
-    :param full_url_mode: if True, the secrets must be stored as one conn URI in just one field per secret.
-        If False (set it as false in backend_kwargs), you can store the secret using different
-        fields (password, user...).
     :param extra_conn_words: for using just when you set full_url_mode as false and store
         the secrets in different fields of secrets manager. You can add more words for each connection
         part beyond the default ones. The extra words to be searched should be passed as a dict of lists,
@@ -103,13 +117,14 @@ class SecretsManagerBackend(BaseSecretsBackend, LoggingMixin):
 
     def __init__(
         self,
-        connections_prefix: str = 'airflow/connections',
-        variables_prefix: str = 'airflow/variables',
-        config_prefix: str = 'airflow/config',
-        profile_name: Optional[str] = None,
+        connections_prefix: str = "airflow/connections",
+        connections_lookup_pattern: str | None = None,
+        variables_prefix: str = "airflow/variables",
+        variables_lookup_pattern: str | None = None,
+        config_prefix: str = "airflow/config",
+        config_lookup_pattern: str | None = None,
         sep: str = "/",
-        full_url_mode: bool = True,
-        extra_conn_words: Optional[dict] = None,
+        extra_conn_words: dict[str, list[str]] | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -125,126 +140,170 @@ class SecretsManagerBackend(BaseSecretsBackend, LoggingMixin):
             self.config_prefix = config_prefix.rstrip(sep)
         else:
             self.config_prefix = config_prefix
-        self.profile_name = profile_name
+        self.connections_lookup_pattern = connections_lookup_pattern
+        self.variables_lookup_pattern = variables_lookup_pattern
+        self.config_lookup_pattern = config_lookup_pattern
         self.sep = sep
-        self.full_url_mode = full_url_mode
+
+        if kwargs.pop("full_url_mode", None) is not None:
+            warnings.warn(
+                "The `full_url_mode` kwarg is deprecated. Going forward, the `SecretsManagerBackend`"
+                " will support both URL-encoded and JSON-encoded secrets at the same time. The encoding"
+                " of the secret will be determined automatically.",
+                AirflowProviderDeprecationWarning,
+                stacklevel=2,
+            )
+
+        if kwargs.get("are_secret_values_urlencoded") is not None:
+            warnings.warn(
+                "The `secret_values_are_urlencoded` is deprecated. This kwarg only exists to assist in"
+                " migrating away from URL-encoding secret values for JSON secrets."
+                " To remove this warning, make sure your JSON secrets are *NOT* URL-encoded, and then"
+                " remove this kwarg from backend_kwargs.",
+                AirflowProviderDeprecationWarning,
+                stacklevel=2,
+            )
+            self.are_secret_values_urlencoded = kwargs.pop("are_secret_values_urlencoded", None)
+        else:
+            self.are_secret_values_urlencoded = False
+
         self.extra_conn_words = extra_conn_words or {}
+
+        self.profile_name = kwargs.get("profile_name", None)
+        # Remove client specific arguments from kwargs
+        self.api_version = kwargs.pop("api_version", None)
+        self.use_ssl = kwargs.pop("use_ssl", None)
+
         self.kwargs = kwargs
 
     @cached_property
     def client(self):
-        """Create a Secrets Manager client"""
-        session = boto3.session.Session(profile_name=self.profile_name)
+        """Create a Secrets Manager client."""
+        from airflow.providers.amazon.aws.hooks.base_aws import SessionFactory
+        from airflow.providers.amazon.aws.utils.connection_wrapper import AwsConnectionWrapper
 
-        return session.client(service_name="secretsmanager", **self.kwargs)
+        conn_id = f"{self.__class__.__name__}__connection"
+        conn_config = AwsConnectionWrapper.from_connection_metadata(conn_id=conn_id, extra=self.kwargs)
+        client_kwargs = trim_none_values(
+            {
+                "region_name": conn_config.region_name,
+                "verify": conn_config.verify,
+                "endpoint_url": conn_config.endpoint_url,
+                "api_version": self.api_version,
+                "use_ssl": self.use_ssl,
+            }
+        )
 
-    @staticmethod
-    def _format_uri_with_extra(secret, conn_string):
-        try:
-            extra_dict = secret['extra']
-        except KeyError:
-            return conn_string
+        session = SessionFactory(conn=conn_config).create_session()
+        return session.client(service_name="secretsmanager", **client_kwargs)
 
-        extra = json.loads(extra_dict)  # this is needed because extra_dict is a string and we need a dict
-        conn_string = f"{conn_string}?{urlencode(extra)}"
-
-        return conn_string
-
-    def get_uri_from_secret(self, secret):
+    def _standardize_secret_keys(self, secret: dict[str, Any]) -> dict[str, Any]:
+        """Standardize the names of the keys in the dict. These keys align with."""
         possible_words_for_conn_fields = {
-            'user': ['user', 'username', 'login', 'user_name'],
-            'password': ['password', 'pass', 'key'],
-            'host': ['host', 'remote_host', 'server'],
-            'port': ['port'],
-            'schema': ['database', 'schema'],
-            'conn_type': ['conn_type', 'conn_id', 'connection_type', 'engine'],
+            "login": ["login", "user", "username", "user_name"],
+            "password": ["password", "pass", "key"],
+            "host": ["host", "remote_host", "server"],
+            "port": ["port"],
+            "schema": ["database", "schema"],
+            "conn_type": ["conn_type", "conn_id", "connection_type", "engine"],
+            "extra": ["extra"],
         }
 
         for conn_field, extra_words in self.extra_conn_words.items():
+            if conn_field == "user":
+                # Support `user` for backwards compatibility.
+                conn_field = "login"
             possible_words_for_conn_fields[conn_field].extend(extra_words)
 
-        conn_d = {}
+        conn_d: dict[str, Any] = {}
         for conn_field, possible_words in possible_words_for_conn_fields.items():
             try:
                 conn_d[conn_field] = [v for k, v in secret.items() if k in possible_words][0]
             except IndexError:
-                conn_d[conn_field] = ''
+                conn_d[conn_field] = None
 
-        conn_string = "{conn_type}://{user}:{password}@{host}:{port}/{schema}".format(**conn_d)
+        return conn_d
 
-        return self._format_uri_with_extra(secret, conn_string)
+    def _remove_escaping_in_secret_dict(self, secret: dict[str, Any]) -> dict[str, Any]:
+        """Un-escape secret values that are URL-encoded."""
+        for k, v in secret.copy().items():
+            if k == "extra" and isinstance(v, dict):
+                # The old behavior was that extras were _not_ urlencoded inside the secret.
+                # So we should just allow the extra dict to remain as-is.
+                continue
 
-    def get_conn_value(self, conn_id: str):
+            elif v is not None:
+                secret[k] = unquote(v)
+
+        return secret
+
+    def get_conn_value(self, conn_id: str) -> str | None:
         """
-        Get serialized representation of Connection
+        Get serialized representation of Connection.
 
         :param conn_id: connection id
         """
         if self.connections_prefix is None:
             return None
 
-        if self.full_url_mode:
-            return self._get_secret(self.connections_prefix, conn_id)
-        try:
-            secret_string = self._get_secret(self.connections_prefix, conn_id)
-            # json.loads gives error
-            secret = ast.literal_eval(secret_string) if secret_string else None
-        except ValueError:  # 'malformed node or string: ' error, for empty conns
-            connection = None
-            secret = None
+        secret = self._get_secret(self.connections_prefix, conn_id, self.connections_lookup_pattern)
 
-        # These lines will check if we have with some denomination stored an username, password and host
-        if secret:
-            connection = self.get_uri_from_secret(secret)
+        if secret is not None and secret.strip().startswith("{"):
+            # Before Airflow 2.3, the AWS SecretsManagerBackend added support for JSON secrets.
+            #
+            # The way this was implemented differs a little from how Airflow's core API handle JSON secrets.
+            #
+            # The most notable difference is that SecretsManagerBackend supports extra aliases for the
+            # Connection parts, e.g. "users" is allowed instead of "login".
+            #
+            # This means we need to deserialize then re-serialize the secret if it's a JSON, potentially
+            # renaming some keys in the process.
 
-        return connection
+            secret_dict = json.loads(secret)
+            standardized_secret_dict = self._standardize_secret_keys(secret_dict)
+            if self.are_secret_values_urlencoded:
+                standardized_secret_dict = self._remove_escaping_in_secret_dict(standardized_secret_dict)
+            standardized_secret = json.dumps(standardized_secret_dict)
+            return standardized_secret
+        else:
+            return secret
 
-    def get_conn_uri(self, conn_id: str) -> Optional[str]:
+    def get_variable(self, key: str) -> str | None:
         """
-        Return URI representation of Connection conn_id.
+        Get Airflow Variable.
 
-        As of Airflow version 2.3.0 this method is deprecated.
-
-        :param conn_id: the connection id
-        :return: deserialized Connection
-        """
-        if get_airflow_version() >= (2, 3):
-            warnings.warn(
-                f"Method `{self.__class__.__name__}.get_conn_uri` is deprecated and will be removed "
-                "in a future release.  Please use method `get_conn_value` instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        return self.get_conn_value(conn_id)
-
-    def get_variable(self, key: str) -> Optional[str]:
-        """
-        Get Airflow Variable from Environment Variable
         :param key: Variable Key
         :return: Variable Value
         """
         if self.variables_prefix is None:
             return None
 
-        return self._get_secret(self.variables_prefix, key)
+        return self._get_secret(self.variables_prefix, key, self.variables_lookup_pattern)
 
-    def get_config(self, key: str) -> Optional[str]:
+    def get_config(self, key: str) -> str | None:
         """
-        Get Airflow Configuration
+        Get Airflow Configuration.
+
         :param key: Configuration Option Key
         :return: Configuration Option Value
         """
         if self.config_prefix is None:
             return None
 
-        return self._get_secret(self.config_prefix, key)
+        return self._get_secret(self.config_prefix, key, self.config_lookup_pattern)
 
-    def _get_secret(self, path_prefix, secret_id: str) -> Optional[str]:
+    def _get_secret(self, path_prefix, secret_id: str, lookup_pattern: str | None) -> str | None:
         """
-        Get secret value from Secrets Manager
+        Get secret value from Secrets Manager.
+
         :param path_prefix: Prefix for the Path to get Secret
         :param secret_id: Secret Key
+        :param lookup_pattern: If provided, `secret_id` must match this pattern to look up the secret in
+            Secrets Manager
         """
+        if lookup_pattern and not re.match(lookup_pattern, secret_id, re.IGNORECASE):
+            return None
+
         error_msg = "An error occurred when calling the get_secret_value operation"
         if path_prefix:
             secrets_path = self.build_path(path_prefix, secret_id, self.sep)
@@ -255,7 +314,7 @@ class SecretsManagerBackend(BaseSecretsBackend, LoggingMixin):
             response = self.client.get_secret_value(
                 SecretId=secrets_path,
             )
-            return response.get('SecretString')
+            return response.get("SecretString")
         except self.client.exceptions.ResourceNotFoundException:
             self.log.debug(
                 "ResourceNotFoundException: %s. Secret %s not found.",

@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
@@ -22,17 +23,14 @@ from airflow.providers.google.cloud.links.base import BaseGoogleLink
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
-BASE_LINK = "https://console.cloud.google.com"
-DATASTORE_BASE_LINK = BASE_LINK + "/datastore"
+DATASTORE_BASE_LINK = "/datastore"
 DATASTORE_IMPORT_EXPORT_LINK = DATASTORE_BASE_LINK + "/import-export?project={project_id}"
-DATASTORE_EXPORT_ENTITIES_LINK = (
-    BASE_LINK + "/storage/browser/{bucket_name}/{export_name}?project={project_id}"
-)
+DATASTORE_EXPORT_ENTITIES_LINK = "/storage/browser/{bucket_name}/{export_name}?project={project_id}"
 DATASTORE_ENTITIES_LINK = DATASTORE_BASE_LINK + "/entities/query/kind?project={project_id}"
 
 
 class CloudDatastoreImportExportLink(BaseGoogleLink):
-    """Helper class for constructing Cloud Datastore Import/Export Link"""
+    """Helper class for constructing Cloud Datastore Import/Export Link."""
 
     name = "Import/Export Page"
     key = "import_export_conf"
@@ -40,7 +38,7 @@ class CloudDatastoreImportExportLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance,
     ):
         task_instance.xcom_push(
@@ -53,7 +51,7 @@ class CloudDatastoreImportExportLink(BaseGoogleLink):
 
 
 class CloudDatastoreEntitiesLink(BaseGoogleLink):
-    """Helper class for constructing Cloud Datastore Entities Link"""
+    """Helper class for constructing Cloud Datastore Entities Link."""
 
     name = "Entities"
     key = "entities_conf"
@@ -61,7 +59,7 @@ class CloudDatastoreEntitiesLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance,
     ):
         task_instance.xcom_push(

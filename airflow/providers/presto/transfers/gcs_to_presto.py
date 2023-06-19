@@ -16,11 +16,12 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google Cloud Storage to Presto operator."""
+from __future__ import annotations
 
 import csv
 import json
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Iterable, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Iterable, Sequence
 
 from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 class GCSToPrestoOperator(BaseOperator):
     """
     Loads a csv file from Google Cloud Storage into a Presto table.
+
     Assumptions:
     1. CSV file should not have headers
     2. Presto table with requisite columns is already created
@@ -44,9 +46,6 @@ class GCSToPrestoOperator(BaseOperator):
     :param presto_conn_id: destination presto connection
     :param gcp_conn_id: (Optional) The connection ID used to connect to Google Cloud and
         interact with the Google Cloud Storage service.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -58,9 +57,9 @@ class GCSToPrestoOperator(BaseOperator):
     """
 
     template_fields: Sequence[str] = (
-        'source_bucket',
-        'source_object',
-        'presto_table',
+        "source_bucket",
+        "source_object",
+        "presto_table",
     )
 
     def __init__(
@@ -71,10 +70,9 @@ class GCSToPrestoOperator(BaseOperator):
         presto_table: str,
         presto_conn_id: str = "presto_default",
         gcp_conn_id: str = "google_cloud_default",
-        schema_fields: Optional[Iterable[str]] = None,
-        schema_object: Optional[str] = None,
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        schema_fields: Iterable[str] | None = None,
+        schema_object: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -85,13 +83,11 @@ class GCSToPrestoOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.schema_fields = schema_fields
         self.schema_object = schema_object
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         gcs_hook = GCSHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
 

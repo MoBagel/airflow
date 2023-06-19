@@ -15,10 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 """This module contains Google Vertex AI operators.
 
-.. spelling::
+.. spelling:word-list::
 
     irreproducible
     codepoints
@@ -26,8 +25,9 @@
     aiplatform
     myVPC
 """
+from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Sequence
 
 from google.api_core.exceptions import NotFound
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
@@ -35,7 +35,6 @@ from google.api_core.retry import Retry
 from google.cloud.aiplatform import gapic, hyperparameter_tuning
 from google.cloud.aiplatform_v1.types import HyperparameterTuningJob
 
-from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.vertex_ai.hyperparameter_tuning_job import (
     HyperparameterTuningJobHook,
 )
@@ -43,14 +42,15 @@ from airflow.providers.google.cloud.links.vertex_ai import (
     VertexAIHyperparameterTuningJobListLink,
     VertexAITrainingLink,
 )
+from airflow.providers.google.cloud.operators.cloud_base import GoogleCloudBaseOperator
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class CreateHyperparameterTuningJobOperator(BaseOperator):
+class CreateHyperparameterTuningJobOperator(GoogleCloudBaseOperator):
     """
-    Create Hyperparameter Tuning job
+    Create Hyperparameter Tuning job.
 
     :param project_id: Required. The ID of the Google Cloud project that the service belongs to.
     :param region: Required. The ID of the Google Cloud region that the service belongs to.
@@ -133,9 +133,6 @@ class CreateHyperparameterTuningJobOperator(BaseOperator):
     :param sync: Whether to execute this method synchronously. If False, this method will unblock and it
         will be executed in a concurrent Future.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -147,9 +144,9 @@ class CreateHyperparameterTuningJobOperator(BaseOperator):
     """
 
     template_fields = [
-        'region',
-        'project_id',
-        'impersonation_chain',
+        "region",
+        "project_id",
+        "impersonation_chain",
     ]
     operator_extra_links = (VertexAITrainingLink(),)
 
@@ -159,34 +156,33 @@ class CreateHyperparameterTuningJobOperator(BaseOperator):
         project_id: str,
         region: str,
         display_name: str,
-        metric_spec: Dict[str, str],
-        parameter_spec: Dict[str, hyperparameter_tuning._ParameterSpec],
+        metric_spec: dict[str, str],
+        parameter_spec: dict[str, hyperparameter_tuning._ParameterSpec],
         max_trial_count: int,
         parallel_trial_count: int,
         # START: CustomJob param
-        worker_pool_specs: Union[List[Dict], List[gapic.WorkerPoolSpec]],
-        base_output_dir: Optional[str] = None,
-        custom_job_labels: Optional[Dict[str, str]] = None,
-        custom_job_encryption_spec_key_name: Optional[str] = None,
-        staging_bucket: Optional[str] = None,
+        worker_pool_specs: list[dict] | list[gapic.WorkerPoolSpec],
+        base_output_dir: str | None = None,
+        custom_job_labels: dict[str, str] | None = None,
+        custom_job_encryption_spec_key_name: str | None = None,
+        staging_bucket: str | None = None,
         # END: CustomJob param
         max_failed_trial_count: int = 0,
-        search_algorithm: Optional[str] = None,
-        measurement_selection: Optional[str] = "best",
-        hyperparameter_tuning_job_labels: Optional[Dict[str, str]] = None,
-        hyperparameter_tuning_job_encryption_spec_key_name: Optional[str] = None,
+        search_algorithm: str | None = None,
+        measurement_selection: str | None = "best",
+        hyperparameter_tuning_job_labels: dict[str, str] | None = None,
+        hyperparameter_tuning_job_encryption_spec_key_name: str | None = None,
         # START: run param
-        service_account: Optional[str] = None,
-        network: Optional[str] = None,
-        timeout: Optional[int] = None,  # seconds
+        service_account: str | None = None,
+        network: str | None = None,
+        timeout: int | None = None,  # seconds
         restart_job_on_worker_restart: bool = False,
         enable_web_access: bool = False,
-        tensorboard: Optional[str] = None,
+        tensorboard: str | None = None,
         sync: bool = True,
         # END: run param
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -217,15 +213,13 @@ class CreateHyperparameterTuningJobOperator(BaseOperator):
         self.tensorboard = tensorboard
         self.sync = sync
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
-        self.hook = None  # type: Optional[HyperparameterTuningJobHook]
+        self.hook: HyperparameterTuningJobHook | None = None
 
-    def execute(self, context: "Context"):
+    def execute(self, context: Context):
         self.log.info("Creating Hyperparameter Tuning job")
         self.hook = HyperparameterTuningJobHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
         result = self.hook.create_hyperparameter_tuning_job(
@@ -278,9 +272,9 @@ class CreateHyperparameterTuningJobOperator(BaseOperator):
             self.hook.cancel_hyperparameter_tuning_job()
 
 
-class GetHyperparameterTuningJobOperator(BaseOperator):
+class GetHyperparameterTuningJobOperator(GoogleCloudBaseOperator):
     """
-    Gets a HyperparameterTuningJob
+    Gets a HyperparameterTuningJob.
 
     :param project_id: Required. The ID of the Google Cloud project that the service belongs to.
     :param region: Required. The ID of the Google Cloud region that the service belongs to.
@@ -289,9 +283,6 @@ class GetHyperparameterTuningJobOperator(BaseOperator):
     :param timeout: The timeout for this request.
     :param metadata: Strings which should be sent along with the request as metadata.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -311,12 +302,11 @@ class GetHyperparameterTuningJobOperator(BaseOperator):
         region: str,
         project_id: str,
         hyperparameter_tuning_job_id: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -327,13 +317,11 @@ class GetHyperparameterTuningJobOperator(BaseOperator):
         self.timeout = timeout
         self.metadata = metadata
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = HyperparameterTuningJobHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
 
@@ -358,7 +346,7 @@ class GetHyperparameterTuningJobOperator(BaseOperator):
             )
 
 
-class DeleteHyperparameterTuningJobOperator(BaseOperator):
+class DeleteHyperparameterTuningJobOperator(GoogleCloudBaseOperator):
     """
     Deletes a HyperparameterTuningJob.
 
@@ -379,12 +367,11 @@ class DeleteHyperparameterTuningJobOperator(BaseOperator):
         hyperparameter_tuning_job_id: str,
         region: str,
         project_id: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -395,13 +382,11 @@ class DeleteHyperparameterTuningJobOperator(BaseOperator):
         self.timeout = timeout
         self.metadata = metadata
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: "Context"):
+    def execute(self, context: Context):
         hook = HyperparameterTuningJobHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
         try:
@@ -422,7 +407,7 @@ class DeleteHyperparameterTuningJobOperator(BaseOperator):
             )
 
 
-class ListHyperparameterTuningJobOperator(BaseOperator):
+class ListHyperparameterTuningJobOperator(GoogleCloudBaseOperator):
     """
     Lists HyperparameterTuningJobs in a Location.
 
@@ -458,16 +443,15 @@ class ListHyperparameterTuningJobOperator(BaseOperator):
         *,
         region: str,
         project_id: str,
-        page_size: Optional[int] = None,
-        page_token: Optional[str] = None,
-        filter: Optional[str] = None,
-        read_mask: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        page_size: int | None = None,
+        page_token: str | None = None,
+        filter: str | None = None,
+        read_mask: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -481,13 +465,11 @@ class ListHyperparameterTuningJobOperator(BaseOperator):
         self.timeout = timeout
         self.metadata = metadata
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: "Context"):
+    def execute(self, context: Context):
         hook = HyperparameterTuningJobHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
         results = hook.list_hyperparameter_tuning_jobs(

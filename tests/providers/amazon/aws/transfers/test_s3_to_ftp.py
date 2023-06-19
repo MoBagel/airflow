@@ -15,20 +15,21 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import unittest
+from __future__ import annotations
+
 from unittest import mock
 
 from airflow.providers.amazon.aws.transfers.s3_to_ftp import S3ToFTPOperator
 
-TASK_ID = 'test_s3_to_ftp'
-BUCKET = 'test-s3-bucket'
-S3_KEY = 'test/test_1_file.csv'
-FTP_PATH = '/tmp/remote_path.txt'
-AWS_CONN_ID = 'aws_default'
-FTP_CONN_ID = 'ftp_default'
+TASK_ID = "test_s3_to_ftp"
+BUCKET = "test-s3-bucket"
+S3_KEY = "test/test_1_file.csv"
+FTP_PATH = "/tmp/remote_path.txt"
+AWS_CONN_ID = "aws_default"
+FTP_CONN_ID = "ftp_default"
 
 
-class TestS3ToFTPOperator(unittest.TestCase):
+class TestS3ToFTPOperator:
     @mock.patch("airflow.providers.ftp.hooks.ftp.FTPHook.store_file")
     @mock.patch("airflow.providers.amazon.aws.hooks.s3.S3Hook.get_key")
     @mock.patch("airflow.providers.amazon.aws.transfers.s3_to_ftp.NamedTemporaryFile")

@@ -15,14 +15,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """
 This module contains a CloudTasksHook
 which allows you to connect to Google Cloud Tasks service,
 performing actions to queues or tasks.
 """
+from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Sequence
 
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.api_core.retry import Retry
@@ -44,9 +44,6 @@ class CloudTasksHook(GoogleBaseHook):
     keyword arguments rather than positional.
 
     :param gcp_conn_id: The connection ID to use when fetching connection info.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -60,37 +57,40 @@ class CloudTasksHook(GoogleBaseHook):
     def __init__(
         self,
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
     ) -> None:
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
         super().__init__(
             gcp_conn_id=gcp_conn_id,
-            delegate_to=delegate_to,
             impersonation_chain=impersonation_chain,
         )
-        self._client: Optional[CloudTasksClient] = None
+        self._client: CloudTasksClient | None = None
 
     def get_conn(self) -> CloudTasksClient:
         """
         Provides a client for interacting with the Google Cloud Tasks API.
 
         :return: Google Cloud Tasks API Client
-        :rtype: google.cloud.tasks_v2.CloudTasksClient
         """
         if self._client is None:
-            self._client = CloudTasksClient(credentials=self._get_credentials(), client_info=CLIENT_INFO)
+            self._client = CloudTasksClient(credentials=self.get_credentials(), client_info=CLIENT_INFO)
         return self._client
 
     @GoogleBaseHook.fallback_to_default_project_id
     def create_queue(
         self,
         location: str,
-        task_queue: Union[dict, Queue],
+        task_queue: dict | Queue,
         project_id: str = PROVIDE_PROJECT_ID,
-        queue_name: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        queue_name: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Queue:
         """
         Creates a queue in Cloud Tasks.
@@ -109,7 +109,6 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.tasks_v2.types.Queue
         """
         client = self.get_conn()
 
@@ -118,12 +117,12 @@ class CloudTasksHook(GoogleBaseHook):
             if isinstance(task_queue, Queue):
                 task_queue.name = full_queue_name
             elif isinstance(task_queue, dict):
-                task_queue['name'] = full_queue_name
+                task_queue["name"] = full_queue_name
             else:
-                raise AirflowException('Unable to set queue_name.')
+                raise AirflowException("Unable to set queue_name.")
         full_location_path = f"projects/{project_id}/locations/{location}"
         return client.create_queue(
-            request={'parent': full_location_path, 'queue': task_queue},
+            request={"parent": full_location_path, "queue": task_queue},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -134,12 +133,12 @@ class CloudTasksHook(GoogleBaseHook):
         self,
         task_queue: Queue,
         project_id: str = PROVIDE_PROJECT_ID,
-        location: Optional[str] = None,
-        queue_name: Optional[str] = None,
-        update_mask: Optional[FieldMask] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        location: str | None = None,
+        queue_name: str | None = None,
+        update_mask: FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Queue:
         """
         Updates a queue in Cloud Tasks.
@@ -162,7 +161,6 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.tasks_v2.types.Queue
         """
         client = self.get_conn()
 
@@ -171,11 +169,11 @@ class CloudTasksHook(GoogleBaseHook):
             if isinstance(task_queue, Queue):
                 task_queue.name = full_queue_name
             elif isinstance(task_queue, dict):
-                task_queue['name'] = full_queue_name
+                task_queue["name"] = full_queue_name
             else:
-                raise AirflowException('Unable to set queue_name.')
+                raise AirflowException("Unable to set queue_name.")
         return client.update_queue(
-            request={'queue': task_queue, 'update_mask': update_mask},
+            request={"queue": task_queue, "update_mask": update_mask},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -187,9 +185,9 @@ class CloudTasksHook(GoogleBaseHook):
         location: str,
         queue_name: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Queue:
         """
         Gets a queue from Cloud Tasks.
@@ -204,13 +202,12 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.tasks_v2.types.Queue
         """
         client = self.get_conn()
 
         full_queue_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
         return client.get_queue(
-            request={'name': full_queue_name},
+            request={"name": full_queue_name},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -221,12 +218,12 @@ class CloudTasksHook(GoogleBaseHook):
         self,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        results_filter: Optional[str] = None,
-        page_size: Optional[int] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-    ) -> List[Queue]:
+        results_filter: str | None = None,
+        page_size: int | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
+    ) -> list[Queue]:
         """
         Lists queues from Cloud Tasks.
 
@@ -242,13 +239,12 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: list[google.cloud.tasks_v2.types.Queue]
         """
         client = self.get_conn()
 
         full_location_path = f"projects/{project_id}/locations/{location}"
         queues = client.list_queues(
-            request={'parent': full_location_path, 'filter': results_filter, 'page_size': page_size},
+            request={"parent": full_location_path, "filter": results_filter, "page_size": page_size},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -261,9 +257,9 @@ class CloudTasksHook(GoogleBaseHook):
         location: str,
         queue_name: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> None:
         """
         Deletes a queue from Cloud Tasks, even if it has tasks in it.
@@ -283,7 +279,7 @@ class CloudTasksHook(GoogleBaseHook):
 
         full_queue_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
         client.delete_queue(
-            request={'name': full_queue_name},
+            request={"name": full_queue_name},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -295,9 +291,9 @@ class CloudTasksHook(GoogleBaseHook):
         location: str,
         queue_name: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Queue:
         """
         Purges a queue by deleting all of its tasks from Cloud Tasks.
@@ -312,13 +308,12 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: list[google.cloud.tasks_v2.types.Queue]
         """
         client = self.get_conn()
 
         full_queue_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
         return client.purge_queue(
-            request={'name': full_queue_name},
+            request={"name": full_queue_name},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -330,9 +325,9 @@ class CloudTasksHook(GoogleBaseHook):
         location: str,
         queue_name: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Queue:
         """
         Pauses a queue in Cloud Tasks.
@@ -347,13 +342,12 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: list[google.cloud.tasks_v2.types.Queue]
         """
         client = self.get_conn()
 
         full_queue_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
         return client.pause_queue(
-            request={'name': full_queue_name},
+            request={"name": full_queue_name},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -365,9 +359,9 @@ class CloudTasksHook(GoogleBaseHook):
         location: str,
         queue_name: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Queue:
         """
         Resumes a queue in Cloud Tasks.
@@ -382,13 +376,12 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: list[google.cloud.tasks_v2.types.Queue]
         """
         client = self.get_conn()
 
         full_queue_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
         return client.resume_queue(
-            request={'name': full_queue_name},
+            request={"name": full_queue_name},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -399,13 +392,13 @@ class CloudTasksHook(GoogleBaseHook):
         self,
         location: str,
         queue_name: str,
-        task: Union[Dict, Task],
+        task: dict | Task,
         project_id: str = PROVIDE_PROJECT_ID,
-        task_name: Optional[str] = None,
-        response_view: Optional[Task.View] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        task_name: str | None = None,
+        response_view: Task.View | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Task:
         """
         Creates a task in Cloud Tasks.
@@ -426,7 +419,6 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.tasks_v2.types.Task
         """
         client = self.get_conn()
 
@@ -437,12 +429,12 @@ class CloudTasksHook(GoogleBaseHook):
             if isinstance(task, Task):
                 task.name = full_task_name
             elif isinstance(task, dict):
-                task['name'] = full_task_name
+                task["name"] = full_task_name
             else:
-                raise AirflowException('Unable to set task_name.')
+                raise AirflowException("Unable to set task_name.")
         full_queue_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
         return client.create_task(
-            request={'parent': full_queue_name, 'task': task, 'response_view': response_view},
+            request={"parent": full_queue_name, "task": task, "response_view": response_view},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -455,10 +447,10 @@ class CloudTasksHook(GoogleBaseHook):
         queue_name: str,
         task_name: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        response_view: Optional[Task.View] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        response_view: Task.View | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Task:
         """
         Gets a task from Cloud Tasks.
@@ -476,13 +468,12 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.tasks_v2.types.Task
         """
         client = self.get_conn()
 
         full_task_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}/tasks/{task_name}"
         return client.get_task(
-            request={'name': full_task_name, 'response_view': response_view},
+            request={"name": full_task_name, "response_view": response_view},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -494,12 +485,12 @@ class CloudTasksHook(GoogleBaseHook):
         location: str,
         queue_name: str,
         project_id: str,
-        response_view: Optional[Task.View] = None,
-        page_size: Optional[int] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-    ) -> List[Task]:
+        response_view: Task.View | None = None,
+        page_size: int | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
+    ) -> list[Task]:
         """
         Lists the tasks in Cloud Tasks.
 
@@ -517,12 +508,11 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: list[google.cloud.tasks_v2.types.Task]
         """
         client = self.get_conn()
         full_queue_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
         tasks = client.list_tasks(
-            request={'parent': full_queue_name, 'response_view': response_view, 'page_size': page_size},
+            request={"parent": full_queue_name, "response_view": response_view, "page_size": page_size},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -536,9 +526,9 @@ class CloudTasksHook(GoogleBaseHook):
         queue_name: str,
         task_name: str,
         project_id: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> None:
         """
         Deletes a task from Cloud Tasks.
@@ -559,7 +549,7 @@ class CloudTasksHook(GoogleBaseHook):
 
         full_task_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}/tasks/{task_name}"
         client.delete_task(
-            request={'name': full_task_name},
+            request={"name": full_task_name},
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -572,10 +562,10 @@ class CloudTasksHook(GoogleBaseHook):
         queue_name: str,
         task_name: str,
         project_id: str,
-        response_view: Optional[Task.View] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        response_view: Task.View | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Task:
         """
         Forces to run a task in Cloud Tasks.
@@ -593,13 +583,12 @@ class CloudTasksHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.tasks_v2.types.Task
         """
         client = self.get_conn()
 
         full_task_name = f"projects/{project_id}/locations/{location}/queues/{queue_name}/tasks/{task_name}"
         return client.run_task(
-            request={'name': full_task_name, 'response_view': response_view},
+            request={"name": full_task_name, "response_view": response_view},
             retry=retry,
             timeout=timeout,
             metadata=metadata,

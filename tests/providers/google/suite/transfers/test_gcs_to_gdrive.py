@@ -15,7 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import unittest
+from __future__ import annotations
+
 from unittest import mock
 
 import pytest
@@ -27,7 +28,7 @@ MODULE = "airflow.providers.google.suite.transfers.gcs_to_gdrive"
 IMPERSONATION_CHAIN = ["ACCOUNT_1", "ACCOUNT_2", "ACCOUNT_3"]
 
 
-class TestGcsToGDriveOperator(unittest.TestCase):
+class TestGcsToGDriveOperator:
     @mock.patch(MODULE + ".GCSHook")
     @mock.patch(MODULE + ".GoogleDriveHook")
     @mock.patch(MODULE + ".tempfile.NamedTemporaryFile")
@@ -47,7 +48,6 @@ class TestGcsToGDriveOperator(unittest.TestCase):
         mock_gcs_hook.assert_has_calls(
             [
                 mock.call(
-                    delegate_to=None,
                     gcp_conn_id="google_cloud_default",
                     impersonation_chain=None,
                 ),
@@ -60,7 +60,6 @@ class TestGcsToGDriveOperator(unittest.TestCase):
         mock_gdrive.assert_has_calls(
             [
                 mock.call(
-                    delegate_to=None,
                     gcp_conn_id="google_cloud_default",
                     impersonation_chain=None,
                 ),
@@ -92,7 +91,6 @@ class TestGcsToGDriveOperator(unittest.TestCase):
         mock_gcs_hook.assert_has_calls(
             [
                 mock.call(
-                    delegate_to=None,
                     gcp_conn_id="google_cloud_default",
                     impersonation_chain=IMPERSONATION_CHAIN,
                 ),
@@ -106,7 +104,6 @@ class TestGcsToGDriveOperator(unittest.TestCase):
         mock_gdrive.assert_has_calls(
             [
                 mock.call(
-                    delegate_to=None,
                     gcp_conn_id="google_cloud_default",
                     impersonation_chain=IMPERSONATION_CHAIN,
                 ),
@@ -136,7 +133,6 @@ class TestGcsToGDriveOperator(unittest.TestCase):
         mock_gcs_hook.assert_has_calls(
             [
                 mock.call(
-                    delegate_to=None,
                     gcp_conn_id="google_cloud_default",
                     impersonation_chain=IMPERSONATION_CHAIN,
                 ),
@@ -153,7 +149,6 @@ class TestGcsToGDriveOperator(unittest.TestCase):
         mock_gdrive.assert_has_calls(
             [
                 mock.call(
-                    delegate_to=None,
                     gcp_conn_id="google_cloud_default",
                     impersonation_chain=IMPERSONATION_CHAIN,
                 ),

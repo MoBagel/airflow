@@ -15,8 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Sequence
 
 from airflow.models import BaseOperator
 from airflow.providers.apache.spark.hooks.spark_submit import SparkSubmitHook
@@ -29,8 +30,7 @@ if TYPE_CHECKING:
 class SparkSubmitOperator(BaseOperator):
     """
     This hook is a wrapper around the spark-submit binary to kick off a spark-submit job.
-    It requires that the "spark-submit" binary is in the PATH or the spark-home is set
-    in the extra on the connection.
+    It requires that the "spark-submit" binary is in the PATH.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -38,7 +38,7 @@ class SparkSubmitOperator(BaseOperator):
 
     :param application: The application that submitted as a job, either jar or py file. (templated)
     :param conf: Arbitrary Spark configuration properties (templated)
-    :param spark_conn_id: The :ref:`spark connection id <howto/connection:spark>` as configured
+    :param conn_id: The :ref:`spark connection id <howto/connection:spark>` as configured
         in Airflow administration. When an invalid connection_id is supplied, it will default to yarn.
     :param files: Upload additional files to the executor running the job, separated by a
                   comma. Files will be placed in the working directory of each executor.
@@ -69,56 +69,56 @@ class SparkSubmitOperator(BaseOperator):
     :param env_vars: Environment variables for spark-submit. It supports yarn and k8s mode too. (templated)
     :param verbose: Whether to pass the verbose flag to spark-submit process for debugging
     :param spark_binary: The command to use for spark submit.
-                         Some distros may use spark2-submit.
+                         Some distros may use spark2-submit or spark3-submit.
     """
 
     template_fields: Sequence[str] = (
-        '_application',
-        '_conf',
-        '_files',
-        '_py_files',
-        '_jars',
-        '_driver_class_path',
-        '_packages',
-        '_exclude_packages',
-        '_keytab',
-        '_principal',
-        '_proxy_user',
-        '_name',
-        '_application_args',
-        '_env_vars',
+        "_application",
+        "_conf",
+        "_files",
+        "_py_files",
+        "_jars",
+        "_driver_class_path",
+        "_packages",
+        "_exclude_packages",
+        "_keytab",
+        "_principal",
+        "_proxy_user",
+        "_name",
+        "_application_args",
+        "_env_vars",
     )
-    ui_color = WEB_COLORS['LIGHTORANGE']
+    ui_color = WEB_COLORS["LIGHTORANGE"]
 
     def __init__(
         self,
         *,
-        application: str = '',
-        conf: Optional[Dict[str, Any]] = None,
-        conn_id: str = 'spark_default',
-        files: Optional[str] = None,
-        py_files: Optional[str] = None,
-        archives: Optional[str] = None,
-        driver_class_path: Optional[str] = None,
-        jars: Optional[str] = None,
-        java_class: Optional[str] = None,
-        packages: Optional[str] = None,
-        exclude_packages: Optional[str] = None,
-        repositories: Optional[str] = None,
-        total_executor_cores: Optional[int] = None,
-        executor_cores: Optional[int] = None,
-        executor_memory: Optional[str] = None,
-        driver_memory: Optional[str] = None,
-        keytab: Optional[str] = None,
-        principal: Optional[str] = None,
-        proxy_user: Optional[str] = None,
-        name: str = 'arrow-spark',
-        num_executors: Optional[int] = None,
+        application: str = "",
+        conf: dict[str, Any] | None = None,
+        conn_id: str = "spark_default",
+        files: str | None = None,
+        py_files: str | None = None,
+        archives: str | None = None,
+        driver_class_path: str | None = None,
+        jars: str | None = None,
+        java_class: str | None = None,
+        packages: str | None = None,
+        exclude_packages: str | None = None,
+        repositories: str | None = None,
+        total_executor_cores: int | None = None,
+        executor_cores: int | None = None,
+        executor_memory: str | None = None,
+        driver_memory: str | None = None,
+        keytab: str | None = None,
+        principal: str | None = None,
+        proxy_user: str | None = None,
+        name: str = "arrow-spark",
+        num_executors: int | None = None,
         status_poll_interval: int = 1,
-        application_args: Optional[List[Any]] = None,
-        env_vars: Optional[Dict[str, Any]] = None,
+        application_args: list[Any] | None = None,
+        env_vars: dict[str, Any] | None = None,
         verbose: bool = False,
-        spark_binary: Optional[str] = None,
+        spark_binary: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -147,11 +147,11 @@ class SparkSubmitOperator(BaseOperator):
         self._env_vars = env_vars
         self._verbose = verbose
         self._spark_binary = spark_binary
-        self._hook: Optional[SparkSubmitHook] = None
+        self._hook: SparkSubmitHook | None = None
         self._conn_id = conn_id
 
-    def execute(self, context: "Context") -> None:
-        """Call the SparkSubmitHook to run the provided spark job"""
+    def execute(self, context: Context) -> None:
+        """Call the SparkSubmitHook to run the provided spark job."""
         if self._hook is None:
             self._hook = self._get_hook()
         self._hook.submit(self._application)

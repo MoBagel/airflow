@@ -34,7 +34,8 @@ function prepare_airflow_packages() {
     rm -rf -- *egg-info*
     rm -rf -- build
 
-    pip install --disable-pip-version-check "pip==${AIRFLOW_PIP_VERSION}" "wheel==${WHEEL_VERSION}"
+    install_supported_pip_version
+    pip install "wheel==${WHEEL_VERSION}"
 
     local packages=()
 
@@ -55,15 +56,14 @@ function prepare_airflow_packages() {
         else
             if [[ ${AIRFLOW_VERSION} != *${VERSION_SUFFIX_FOR_PYPI} ]]; then
                 echo
-                echo "${COLOR_RED}The requested PyPI suffix ${VERSION_SUFFIX_FOR_PYPI} does not match the one in ${AIRFLOW_VERSION}. Exiting.${COLOR_RESET}"
+                echo "${COLOR_YELLOW}The requested PyPI suffix ${VERSION_SUFFIX_FOR_PYPI} does not match the one in ${AIRFLOW_VERSION}. Overriding it with one from ${VERSION_SUFFIX_FOR_PYPI}.${COLOR_RESET}"
                 echo
-                exit 1
             fi
         fi
     fi
 
     # Prepare airflow's wheel
-    PYTHONUNBUFFERED=1 python setup.py compile_assets "${tag_build[@]}" "${packages[@]}"
+    PYTHONUNBUFFERED=1 python setup.py "${tag_build[@]}" "${packages[@]}"
 
     # clean-up
     rm -rf -- *egg-info*
@@ -78,7 +78,14 @@ function prepare_airflow_packages() {
     echo "${COLOR_BLUE}===================================================================================${COLOR_RESET}"
 }
 
+function mark_directory_as_safe() {
+    git config --global --unset-all safe.directory || true
+    git config --global --add safe.directory /opt/airflow
+}
+
 install_supported_pip_version
+
+mark_directory_as_safe
 
 prepare_airflow_packages
 

@@ -15,8 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 from enum import Enum
-from typing import Set
 
 from airflow.compat.functools import cache
 
@@ -24,9 +25,9 @@ from airflow.compat.functools import cache
 class WeightRule(str, Enum):
     """Weight rules."""
 
-    DOWNSTREAM = 'downstream'
-    UPSTREAM = 'upstream'
-    ABSOLUTE = 'absolute'
+    DOWNSTREAM = "downstream"
+    UPSTREAM = "upstream"
+    ABSOLUTE = "absolute"
 
     @classmethod
     def is_valid(cls, weight_rule: str) -> bool:
@@ -35,8 +36,8 @@ class WeightRule(str, Enum):
 
     @classmethod
     @cache
-    def all_weight_rules(cls) -> Set[str]:
-        """Returns all weight rules"""
+    def all_weight_rules(cls) -> set[str]:
+        """Returns all weight rules."""
         return set(cls.__members__.values())
 
     def __str__(self) -> str:

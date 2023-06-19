@@ -14,8 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import Union
-from unittest import TestCase, mock
+from __future__ import annotations
+
+from unittest import mock
 
 from google.api_core.gapic_v1.method import _MethodDefault
 from google.api_core.retry import Retry
@@ -45,7 +46,7 @@ TEST_SERVICE: dict = {"name": "test-service"}
 TEST_SERVICE_ID: str = "test-service-id"
 
 TEST_TIMEOUT = 120
-TEST_RETRY: Union[Retry, _MethodDefault] = mock.MagicMock(Retry)
+TEST_RETRY: Retry | _MethodDefault = mock.MagicMock(Retry)
 TEST_METADATA = [("key", "value")]
 TEST_REQUEST_ID = "request_id_uuid"
 
@@ -69,7 +70,7 @@ TEST_UPDATE_MASK: FieldMask = FieldMask(paths=["labels"])
 TEST_DESTINATION_GCS_FOLDER: str = "gs://bucket_name/path_inside_bucket"
 
 
-class TestDataprocMetastoreCreateBackupOperator(TestCase):
+class TestDataprocMetastoreCreateBackupOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.Backup")
     def test_assert_valid_hook_call(self, mock_backup, mock_hook) -> None:
@@ -103,7 +104,7 @@ class TestDataprocMetastoreCreateBackupOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreCreateMetadataImportOperator(TestCase):
+class TestDataprocMetastoreCreateMetadataImportOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.MetadataImport")
     def test_assert_valid_hook_call(self, mock_metadata_import, mock_hook) -> None:
@@ -137,7 +138,7 @@ class TestDataprocMetastoreCreateMetadataImportOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreCreateServiceOperator(TestCase):
+class TestDataprocMetastoreCreateServiceOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.Service")
     def test_execute(self, mock_service, mock_hook) -> None:
@@ -170,7 +171,7 @@ class TestDataprocMetastoreCreateServiceOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreDeleteBackupOperator(TestCase):
+class TestDataprocMetastoreDeleteBackupOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     def test_assert_valid_hook_call(self, mock_hook) -> None:
         task = DataprocMetastoreDeleteBackupOperator(
@@ -200,7 +201,7 @@ class TestDataprocMetastoreDeleteBackupOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreDeleteServiceOperator(TestCase):
+class TestDataprocMetastoreDeleteServiceOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     def test_execute(self, mock_hook) -> None:
         task = DataprocMetastoreDeleteServiceOperator(
@@ -227,7 +228,7 @@ class TestDataprocMetastoreDeleteServiceOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreExportMetadataOperator(TestCase):
+class TestDataprocMetastoreExportMetadataOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.MetadataExport")
     @mock.patch(
@@ -264,7 +265,7 @@ class TestDataprocMetastoreExportMetadataOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreGetServiceOperator(TestCase):
+class TestDataprocMetastoreGetServiceOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.Service")
     def test_execute(self, mock_service, mock_hook) -> None:
@@ -293,7 +294,7 @@ class TestDataprocMetastoreGetServiceOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreListBackupsOperator(TestCase):
+class TestDataprocMetastoreListBackupsOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.Backup")
     def test_assert_valid_hook_call(self, mock_backup, mock_hook) -> None:
@@ -326,7 +327,7 @@ class TestDataprocMetastoreListBackupsOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreRestoreServiceOperator(TestCase):
+class TestDataprocMetastoreRestoreServiceOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     @mock.patch(
         "airflow.providers.google.cloud.operators.dataproc_metastore"
@@ -367,7 +368,7 @@ class TestDataprocMetastoreRestoreServiceOperator(TestCase):
         )
 
 
-class TestDataprocMetastoreUpdateServiceOperator(TestCase):
+class TestDataprocMetastoreUpdateServiceOperator:
     @mock.patch("airflow.providers.google.cloud.operators.dataproc_metastore.DataprocMetastoreHook")
     def test_assert_valid_hook_call(self, mock_hook) -> None:
         task = DataprocMetastoreUpdateServiceOperator(

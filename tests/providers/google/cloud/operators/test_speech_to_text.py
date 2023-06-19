@@ -15,12 +15,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from google.api_core.gapic_v1.method import DEFAULT
+from google.cloud.speech_v1 import RecognizeResponse
 
 from airflow.exceptions import AirflowException
 from airflow.providers.google.cloud.operators.speech_to_text import CloudSpeechToTextRecognizeSpeechOperator
@@ -32,10 +33,10 @@ CONFIG = {"encoding": "LINEAR16"}
 AUDIO = {"uri": "gs://bucket/object"}
 
 
-class TestCloudSql(unittest.TestCase):
+class TestCloudSpeechToTextRecognizeSpeechOperator:
     @patch("airflow.providers.google.cloud.operators.speech_to_text.CloudSpeechToTextHook")
     def test_recognize_speech_green_path(self, mock_hook):
-        mock_hook.return_value.recognize_speech.return_value = MagicMock()
+        mock_hook.return_value.recognize_speech.return_value = RecognizeResponse()
 
         CloudSpeechToTextRecognizeSpeechOperator(
             project_id=PROJECT_ID,

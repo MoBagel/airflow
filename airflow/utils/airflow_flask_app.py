@@ -14,8 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-from typing import Any, List, cast
+from typing import Any, cast
 
 from flask import Flask
 
@@ -24,11 +25,11 @@ from airflow.www.extensions.init_appbuilder import AirflowAppBuilder
 
 
 class AirflowApp(Flask):
-    """Airflow Flask Application"""
+    """Airflow Flask Application."""
 
     appbuilder: AirflowAppBuilder
     dag_bag: DagBag
-    api_auth: List[Any]
+    api_auth: list[Any]
 
 
 def get_airflow_app() -> AirflowApp:

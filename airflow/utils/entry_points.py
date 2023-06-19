@@ -14,25 +14,46 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
+import collections
+import functools
+import logging
+from typing import Iterator, Tuple
 
 try:
-    import importlib_metadata
+    import importlib_metadata as metadata
 except ImportError:
-    from importlib import metadata as importlib_metadata  # type: ignore
+    from importlib import metadata  # type: ignore[no-redef]
+
+log = logging.getLogger(__name__)
+
+EPnD = Tuple[metadata.EntryPoint, metadata.Distribution]
 
 
-def entry_points_with_dist(group: str):
-    """
-    Return EntryPoint objects of the given group, along with the distribution information.
+@functools.lru_cache(maxsize=None)
+def _get_grouped_entry_points() -> dict[str, list[EPnD]]:
+    mapping: dict[str, list[EPnD]] = collections.defaultdict(list)
+    for dist in metadata.distributions():
+        try:
+            for e in dist.entry_points:
+                mapping[e.group].append((e, dist))
+        except Exception as e:
+            log.warning("Error when retrieving package metadata (skipping it): %s, %s", dist, e)
+    return mapping
 
-    This is like the ``entry_points()`` function from importlib.metadata,
-    except it also returns the distribution the entry_point was loaded from.
+
+def entry_points_with_dist(group: str) -> Iterator[EPnD]:
+    """Retrieve entry points of the given group.
+
+    This is like the ``entry_points()`` function from ``importlib.metadata``,
+    except it also returns the distribution the entry point was loaded from.
+
+    Note that this may return multiple distributions to the same package if they
+    are loaded from different ``sys.path`` entries. The caller site should
+    implement appropriate deduplication logic if needed.
 
     :param group: Filter results to only this entrypoint group
     :return: Generator of (EntryPoint, Distribution) objects for the specified groups
     """
-    for dist in importlib_metadata.distributions():
-        for e in dist.entry_points:
-            if e.group != group:
-                continue
-            yield e, dist
+    return iter(_get_grouped_entry_points()[group])

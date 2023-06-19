@@ -15,12 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import sys
+from __future__ import annotations
 
-if sys.version_info >= (3, 8):
-    from functools import cached_property
-else:
-    from cached_property import cached_property
+import sys
 
 if sys.version_info >= (3, 9):
     from functools import cache
@@ -29,5 +26,8 @@ else:
 
     cache = lru_cache(maxsize=None)
 
+# We need to keep it around, in case it was used in the code of old providers, but since we are
+# Python 3.8+ we can directly import the functools one
+from functools import cached_property  # type: ignore
 
 __all__ = ["cache", "cached_property"]

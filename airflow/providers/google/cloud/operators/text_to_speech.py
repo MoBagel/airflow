@@ -16,27 +16,28 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains a Google Text to Speech operator."""
+from __future__ import annotations
 
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Dict, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Sequence
 
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.api_core.retry import Retry
 from google.cloud.texttospeech_v1.types import AudioConfig, SynthesisInput, VoiceSelectionParams
 
 from airflow.exceptions import AirflowException
-from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from airflow.providers.google.cloud.hooks.text_to_speech import CloudTextToSpeechHook
+from airflow.providers.google.cloud.operators.cloud_base import GoogleCloudBaseOperator
 from airflow.providers.google.common.links.storage import FileDetailsLink
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class CloudTextToSpeechSynthesizeOperator(BaseOperator):
+class CloudTextToSpeechSynthesizeOperator(GoogleCloudBaseOperator):
     """
-    Synthesizes text to speech and stores it in Google Cloud Storage
+    Synthesizes text to speech and stores it in Google Cloud Storage.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -86,16 +87,16 @@ class CloudTextToSpeechSynthesizeOperator(BaseOperator):
     def __init__(
         self,
         *,
-        input_data: Union[Dict, SynthesisInput],
-        voice: Union[Dict, VoiceSelectionParams],
-        audio_config: Union[Dict, AudioConfig],
+        input_data: dict | SynthesisInput,
+        voice: dict | VoiceSelectionParams,
+        audio_config: dict | AudioConfig,
         target_bucket_name: str,
         target_filename: str,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         gcp_conn_id: str = "google_cloud_default",
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         self.input_data = input_data
@@ -122,7 +123,7 @@ class CloudTextToSpeechSynthesizeOperator(BaseOperator):
             if getattr(self, parameter) == "":
                 raise AirflowException(f"The required parameter '{parameter}' is empty")
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         hook = CloudTextToSpeechHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,

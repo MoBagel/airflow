@@ -14,9 +14,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Optional, Sequence, Set
+from functools import cached_property
+from typing import TYPE_CHECKING, Sequence
+
+from deprecated import deprecated
 
 from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.sagemaker import LogState, SageMakerHook
@@ -34,53 +38,57 @@ class SageMakerBaseSensor(BaseSensorOperator):
     Subclasses should also implement NON_TERMINAL_STATES and FAILED_STATE methods.
     """
 
-    ui_color = '#ededed'
+    ui_color = "#ededed"
 
-    def __init__(self, *, aws_conn_id: str = 'aws_default', **kwargs):
+    def __init__(self, *, aws_conn_id: str = "aws_default", resource_type: str = "job", **kwargs):
         super().__init__(**kwargs)
         self.aws_conn_id = aws_conn_id
-        self.hook: Optional[SageMakerHook] = None
+        self.resource_type = resource_type  # only used for logs, to say what kind of resource we are sensing
 
+    @deprecated(reason="use `hook` property instead.")
     def get_hook(self) -> SageMakerHook:
         """Get SageMakerHook."""
-        if self.hook:
-            return self.hook
-        self.hook = SageMakerHook(aws_conn_id=self.aws_conn_id)
         return self.hook
 
-    def poke(self, context: 'Context'):
+    @cached_property
+    def hook(self) -> SageMakerHook:
+        return SageMakerHook(aws_conn_id=self.aws_conn_id)
+
+    def poke(self, context: Context):
         response = self.get_sagemaker_response()
-        if response['ResponseMetadata']['HTTPStatusCode'] != 200:
-            self.log.info('Bad HTTP response: %s', response)
+        if response["ResponseMetadata"]["HTTPStatusCode"] != 200:
+            self.log.info("Bad HTTP response: %s", response)
             return False
         state = self.state_from_response(response)
-        self.log.info('Job currently %s', state)
+        self.log.info("%s currently %s", self.resource_type, state)
         if state in self.non_terminal_states():
             return False
         if state in self.failed_states():
             failed_reason = self.get_failed_reason_from_response(response)
-            raise AirflowException(f'Sagemaker job failed for the following reason: {failed_reason}')
+            raise AirflowException(
+                f"Sagemaker {self.resource_type} failed for the following reason: {failed_reason}"
+            )
         return True
 
-    def non_terminal_states(self) -> Set[str]:
+    def non_terminal_states(self) -> set[str]:
         """Placeholder for returning states with should not terminate."""
-        raise NotImplementedError('Please implement non_terminal_states() in subclass')
+        raise NotImplementedError("Please implement non_terminal_states() in subclass")
 
-    def failed_states(self) -> Set[str]:
+    def failed_states(self) -> set[str]:
         """Placeholder for returning states with are considered failed."""
-        raise NotImplementedError('Please implement failed_states() in subclass')
+        raise NotImplementedError("Please implement failed_states() in subclass")
 
     def get_sagemaker_response(self) -> dict:
         """Placeholder for checking status of a SageMaker task."""
-        raise NotImplementedError('Please implement get_sagemaker_response() in subclass')
+        raise NotImplementedError("Please implement get_sagemaker_response() in subclass")
 
     def get_failed_reason_from_response(self, response: dict) -> str:
         """Placeholder for extracting the reason for failure from an AWS response."""
-        return 'Unknown'
+        return "Unknown"
 
     def state_from_response(self, response: dict) -> str:
         """Placeholder for extracting the state from an AWS response."""
-        raise NotImplementedError('Please implement state_from_response() in subclass')
+        raise NotImplementedError("Please implement state_from_response() in subclass")
 
 
 class SageMakerEndpointSensor(SageMakerBaseSensor):
@@ -95,7 +103,7 @@ class SageMakerEndpointSensor(SageMakerBaseSensor):
     :param endpoint_name: Name of the endpoint instance to watch.
     """
 
-    template_fields: Sequence[str] = ('endpoint_name',)
+    template_fields: Sequence[str] = ("endpoint_name",)
     template_ext: Sequence[str] = ()
 
     def __init__(self, *, endpoint_name, **kwargs):
@@ -109,14 +117,14 @@ class SageMakerEndpointSensor(SageMakerBaseSensor):
         return SageMakerHook.failed_states
 
     def get_sagemaker_response(self):
-        self.log.info('Poking Sagemaker Endpoint %s', self.endpoint_name)
-        return self.get_hook().describe_endpoint(self.endpoint_name)
+        self.log.info("Poking Sagemaker Endpoint %s", self.endpoint_name)
+        return self.hook.describe_endpoint(self.endpoint_name)
 
     def get_failed_reason_from_response(self, response):
-        return response['FailureReason']
+        return response["FailureReason"]
 
     def state_from_response(self, response):
-        return response['EndpointStatus']
+        return response["EndpointStatus"]
 
 
 class SageMakerTransformSensor(SageMakerBaseSensor):
@@ -131,7 +139,7 @@ class SageMakerTransformSensor(SageMakerBaseSensor):
     :param job_name: Name of the transform job to watch.
     """
 
-    template_fields: Sequence[str] = ('job_name',)
+    template_fields: Sequence[str] = ("job_name",)
     template_ext: Sequence[str] = ()
 
     def __init__(self, *, job_name: str, **kwargs):
@@ -145,14 +153,14 @@ class SageMakerTransformSensor(SageMakerBaseSensor):
         return SageMakerHook.failed_states
 
     def get_sagemaker_response(self):
-        self.log.info('Poking Sagemaker Transform Job %s', self.job_name)
-        return self.get_hook().describe_transform_job(self.job_name)
+        self.log.info("Poking Sagemaker Transform Job %s", self.job_name)
+        return self.hook.describe_transform_job(self.job_name)
 
     def get_failed_reason_from_response(self, response):
-        return response['FailureReason']
+        return response["FailureReason"]
 
     def state_from_response(self, response):
-        return response['TransformJobStatus']
+        return response["TransformJobStatus"]
 
 
 class SageMakerTuningSensor(SageMakerBaseSensor):
@@ -167,7 +175,7 @@ class SageMakerTuningSensor(SageMakerBaseSensor):
     :param job_name: Name of the tuning instance to watch.
     """
 
-    template_fields: Sequence[str] = ('job_name',)
+    template_fields: Sequence[str] = ("job_name",)
     template_ext: Sequence[str] = ()
 
     def __init__(self, *, job_name: str, **kwargs):
@@ -181,14 +189,14 @@ class SageMakerTuningSensor(SageMakerBaseSensor):
         return SageMakerHook.failed_states
 
     def get_sagemaker_response(self):
-        self.log.info('Poking Sagemaker Tuning Job %s', self.job_name)
-        return self.get_hook().describe_tuning_job(self.job_name)
+        self.log.info("Poking Sagemaker Tuning Job %s", self.job_name)
+        return self.hook.describe_tuning_job(self.job_name)
 
     def get_failed_reason_from_response(self, response):
-        return response['FailureReason']
+        return response["FailureReason"]
 
     def state_from_response(self, response):
-        return response['HyperParameterTuningJobStatus']
+        return response["HyperParameterTuningJobStatus"]
 
 
 class SageMakerTrainingSensor(SageMakerBaseSensor):
@@ -204,7 +212,7 @@ class SageMakerTrainingSensor(SageMakerBaseSensor):
     :param print_log: Prints the cloudwatch log if True; Defaults to True.
     """
 
-    template_fields: Sequence[str] = ('job_name',)
+    template_fields: Sequence[str] = ("job_name",)
     template_ext: Sequence[str] = ()
 
     def __init__(self, *, job_name, print_log=True, **kwargs):
@@ -213,8 +221,8 @@ class SageMakerTrainingSensor(SageMakerBaseSensor):
         self.print_log = print_log
         self.positions = {}
         self.stream_names = []
-        self.instance_count: Optional[int] = None
-        self.state: Optional[int] = None
+        self.instance_count: int | None = None
+        self.state: int | None = None
         self.last_description = None
         self.last_describe_job_call = None
         self.log_resource_inited = False
@@ -222,8 +230,8 @@ class SageMakerTrainingSensor(SageMakerBaseSensor):
     def init_log_resource(self, hook: SageMakerHook) -> None:
         """Set tailing LogState for associated training job."""
         description = hook.describe_training_job(self.job_name)
-        self.instance_count = description['ResourceConfig']['InstanceCount']
-        status = description['TrainingJobStatus']
+        self.instance_count = description["ResourceConfig"]["InstanceCount"]
+        status = description["TrainingJobStatus"]
         job_already_completed = status not in self.non_terminal_states()
         self.state = LogState.COMPLETE if job_already_completed else LogState.TAILING
         self.last_description = description
@@ -239,12 +247,12 @@ class SageMakerTrainingSensor(SageMakerBaseSensor):
     def get_sagemaker_response(self):
         if self.print_log:
             if not self.log_resource_inited:
-                self.init_log_resource(self.get_hook())
+                self.init_log_resource(self.hook)
             (
                 self.state,
                 self.last_description,
                 self.last_describe_job_call,
-            ) = self.get_hook().describe_training_job_with_log(
+            ) = self.hook.describe_training_job_with_log(
                 self.job_name,
                 self.positions,
                 self.stream_names,
@@ -254,17 +262,84 @@ class SageMakerTrainingSensor(SageMakerBaseSensor):
                 self.last_describe_job_call,
             )
         else:
-            self.last_description = self.get_hook().describe_training_job(self.job_name)
+            self.last_description = self.hook.describe_training_job(self.job_name)
         status = self.state_from_response(self.last_description)
         if (status not in self.non_terminal_states()) and (status not in self.failed_states()):
             billable_time = (
-                self.last_description['TrainingEndTime'] - self.last_description['TrainingStartTime']
-            ) * self.last_description['ResourceConfig']['InstanceCount']
-            self.log.info('Billable seconds: %s', (int(billable_time.total_seconds()) + 1))
+                self.last_description["TrainingEndTime"] - self.last_description["TrainingStartTime"]
+            ) * self.last_description["ResourceConfig"]["InstanceCount"]
+            self.log.info("Billable seconds: %s", (int(billable_time.total_seconds()) + 1))
         return self.last_description
 
     def get_failed_reason_from_response(self, response):
-        return response['FailureReason']
+        return response["FailureReason"]
 
     def state_from_response(self, response):
-        return response['TrainingJobStatus']
+        return response["TrainingJobStatus"]
+
+
+class SageMakerPipelineSensor(SageMakerBaseSensor):
+    """
+    Polls the pipeline until it reaches a terminal state.  Raises an
+    AirflowException with the failure reason if a failed state is reached.
+
+    .. seealso::
+        For more information on how to use this sensor, take a look at the guide:
+        :ref:`howto/sensor:SageMakerPipelineSensor`
+
+    :param pipeline_exec_arn: ARN of the pipeline to watch.
+    :param verbose: Whether to print steps details while waiting for completion.
+            Defaults to true, consider turning off for pipelines that have thousands of steps.
+    """
+
+    template_fields: Sequence[str] = ("pipeline_exec_arn",)
+
+    def __init__(self, *, pipeline_exec_arn: str, verbose: bool = True, **kwargs):
+        super().__init__(resource_type="pipeline", **kwargs)
+        self.pipeline_exec_arn = pipeline_exec_arn
+        self.verbose = verbose
+
+    def non_terminal_states(self) -> set[str]:
+        return SageMakerHook.pipeline_non_terminal_states
+
+    def failed_states(self) -> set[str]:
+        return SageMakerHook.failed_states
+
+    def get_sagemaker_response(self) -> dict:
+        self.log.info("Poking Sagemaker Pipeline Execution %s", self.pipeline_exec_arn)
+        return self.hook.describe_pipeline_exec(self.pipeline_exec_arn, self.verbose)
+
+    def state_from_response(self, response: dict) -> str:
+        return response["PipelineExecutionStatus"]
+
+
+class SageMakerAutoMLSensor(SageMakerBaseSensor):
+    """
+    Polls the auto ML job until it reaches a terminal state.
+    Raises an AirflowException with the failure reason if a failed state is reached.
+
+    .. seealso::
+        For more information on how to use this sensor, take a look at the guide:
+        :ref:`howto/sensor:SageMakerAutoMLSensor`
+
+    :param job_name: unique name of the AutoML job to watch.
+    """
+
+    template_fields: Sequence[str] = ("job_name",)
+
+    def __init__(self, *, job_name: str, **kwargs):
+        super().__init__(resource_type="autoML job", **kwargs)
+        self.job_name = job_name
+
+    def non_terminal_states(self) -> set[str]:
+        return SageMakerHook.non_terminal_states
+
+    def failed_states(self) -> set[str]:
+        return SageMakerHook.failed_states
+
+    def get_sagemaker_response(self) -> dict:
+        self.log.info("Poking Sagemaker AutoML Execution %s", self.job_name)
+        return self.hook._describe_auto_ml_job(self.job_name)
+
+    def state_from_response(self, response: dict) -> str:
+        return response["AutoMLJobStatus"]

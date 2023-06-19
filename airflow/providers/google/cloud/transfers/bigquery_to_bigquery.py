@@ -16,9 +16,12 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google BigQuery to BigQuery operator."""
-import warnings
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Union
+from __future__ import annotations
 
+import warnings
+from typing import TYPE_CHECKING, Sequence
+
+from airflow.exceptions import AirflowProviderDeprecationWarning
 from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.google.cloud.links.bigquery import BigQueryTableLink
@@ -31,6 +34,9 @@ class BigQueryToBigQueryOperator(BaseOperator):
     """
     Copies data from one BigQuery table to another.
 
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:BigQueryToBigQueryOperator`
     .. seealso::
         For more details about these parameters:
         https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.copy
@@ -45,9 +51,6 @@ class BigQueryToBigQueryOperator(BaseOperator):
     :param write_disposition: The write disposition if the table already exists.
     :param create_disposition: The create disposition if the table doesn't exist.
     :param gcp_conn_id: (Optional) The connection ID used to connect to Google Cloud.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param labels: a dictionary containing labels for the job/query,
         passed to BigQuery
     :param encryption_configuration: [Optional] Custom encryption configuration (e.g., Cloud KMS keys).
@@ -56,7 +59,11 @@ class BigQueryToBigQueryOperator(BaseOperator):
             encryption_configuration = {
                 "kmsKeyName": "projects/testp/locations/us/keyRings/test-kr/cryptoKeys/test-key"
             }
-    :param location: The location used for the operation.
+    :param location: The geographic location of the job. You must specify the location to run the job if
+        the location to run a job is not in the US or the EU multi-regional location or
+        the location is in a single region (for example, us-central1).
+        For more details check:
+        https://cloud.google.com/bigquery/docs/locations#specifying_your_location
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -68,28 +75,27 @@ class BigQueryToBigQueryOperator(BaseOperator):
     """
 
     template_fields: Sequence[str] = (
-        'source_project_dataset_tables',
-        'destination_project_dataset_table',
-        'labels',
-        'impersonation_chain',
+        "source_project_dataset_tables",
+        "destination_project_dataset_table",
+        "labels",
+        "impersonation_chain",
     )
-    template_ext: Sequence[str] = ('.sql',)
-    ui_color = '#e6f0e4'
+    template_ext: Sequence[str] = (".sql",)
+    ui_color = "#e6f0e4"
     operator_extra_links = (BigQueryTableLink(),)
 
     def __init__(
         self,
         *,
-        source_project_dataset_tables: Union[List[str], str],
+        source_project_dataset_tables: list[str] | str,
         destination_project_dataset_table: str,
-        write_disposition: str = 'WRITE_EMPTY',
-        create_disposition: str = 'CREATE_IF_NEEDED',
-        gcp_conn_id: str = 'google_cloud_default',
-        delegate_to: Optional[str] = None,
-        labels: Optional[Dict] = None,
-        encryption_configuration: Optional[Dict] = None,
-        location: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        write_disposition: str = "WRITE_EMPTY",
+        create_disposition: str = "CREATE_IF_NEEDED",
+        gcp_conn_id: str = "google_cloud_default",
+        labels: dict | None = None,
+        encryption_configuration: dict | None = None,
+        location: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -99,27 +105,25 @@ class BigQueryToBigQueryOperator(BaseOperator):
         self.write_disposition = write_disposition
         self.create_disposition = create_disposition
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.labels = labels
         self.encryption_configuration = encryption_configuration
         self.location = location
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         self.log.info(
-            'Executing copy of %s into: %s',
+            "Executing copy of %s into: %s",
             self.source_project_dataset_tables,
             self.destination_project_dataset_table,
         )
         hook = BigQueryHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             location=self.location,
             impersonation_chain=self.impersonation_chain,
         )
 
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
+            warnings.simplefilter("ignore", AirflowProviderDeprecationWarning)
             job_id = hook.run_copy(
                 source_project_dataset_tables=self.source_project_dataset_tables,
                 destination_project_dataset_table=self.destination_project_dataset_table,
@@ -129,7 +133,7 @@ class BigQueryToBigQueryOperator(BaseOperator):
                 encryption_configuration=self.encryption_configuration,
             )
 
-            job = hook.get_job(job_id=job_id).to_api_repr()
+            job = hook.get_job(job_id=job_id, location=self.location).to_api_repr()
             conf = job["configuration"]["copy"]["destinationTable"]
             BigQueryTableLink.persist(
                 context=context,

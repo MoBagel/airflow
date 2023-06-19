@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 from sqlalchemy.orm.session import Session
 
@@ -43,7 +44,7 @@ def get_extra_links(
     task_id: str,
     session: Session = NEW_SESSION,
 ) -> APIResponse:
-    """Get extra links for task instance"""
+    """Get extra links for task instance."""
     from airflow.models.taskinstance import TaskInstance
 
     dagbag: DagBag = get_airflow_app().dag_bag

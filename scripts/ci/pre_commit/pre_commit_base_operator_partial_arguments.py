@@ -16,7 +16,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 from __future__ import annotations
 
 import ast
@@ -45,14 +44,12 @@ IGNORED = {
     "HIDE_ATTRS_FROM_UI",
     # Only on BaseOperator.
     "_dag",
-    "mapped_arguments_validated_by_init",
     "output",
     "partial",
     "shallow_copy_attrs",
     # Only on MappedOperator.
     "expand_input",
     "partial_kwargs",
-    "validate_upstream_return_value",
 }
 
 
@@ -140,6 +137,9 @@ def _iter_member_names(klass: ast.ClassDef) -> typing.Iterator[str]:
             yield node.target.id
         elif isinstance(node, ast.FunctionDef) and _is_property(node):
             yield node.name
+        elif isinstance(node, ast.Assign):
+            if len(node.targets) == 1 and isinstance(target := node.targets[0], ast.Name):
+                yield target.id
 
 
 def check_operator_member_parity() -> bool:

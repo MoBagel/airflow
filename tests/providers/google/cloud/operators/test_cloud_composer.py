@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 from unittest import mock
 
 import pytest
@@ -35,7 +37,6 @@ TASK_ID = "task-id"
 TEST_GCP_REGION = "global"
 TEST_GCP_PROJECT = "test-project"
 TEST_GCP_CONN_ID = "test-gcp-conn-id"
-TEST_DELEGATE_TO = None
 TEST_IMPERSONATION_CHAIN = None
 TEST_ENVIRONMENT_ID = "testenvname"
 TEST_ENVIRONMENT = {
@@ -81,7 +82,6 @@ class TestCloudComposerCreateEnvironmentOperator:
         mock_hook.assert_called_once_with(
             gcp_conn_id=TEST_GCP_CONN_ID,
             impersonation_chain=TEST_IMPERSONATION_CHAIN,
-            delegate_to=TEST_DELEGATE_TO,
         )
         mock_hook.return_value.create_environment.assert_called_once_with(
             project_id=TEST_GCP_PROJECT,
@@ -94,7 +94,7 @@ class TestCloudComposerCreateEnvironmentOperator:
 
     @mock.patch(COMPOSER_STRING.format("Environment.to_dict"))
     @mock.patch(COMPOSER_STRING.format("CloudComposerHook"))
-    @mock.patch(COMPOSER_TRIGGERS_STRING.format("CloudComposerHook"))
+    @mock.patch(COMPOSER_TRIGGERS_STRING.format("CloudComposerAsyncHook"))
     def test_execute_deferrable(self, mock_trigger_hook, mock_hook, to_dict_mode):
         op = CloudComposerCreateEnvironmentOperator(
             task_id=TASK_ID,
@@ -133,7 +133,6 @@ class TestCloudComposerDeleteEnvironmentOperator:
         mock_hook.assert_called_once_with(
             gcp_conn_id=TEST_GCP_CONN_ID,
             impersonation_chain=TEST_IMPERSONATION_CHAIN,
-            delegate_to=TEST_DELEGATE_TO,
         )
         mock_hook.return_value.delete_environment.assert_called_once_with(
             project_id=TEST_GCP_PROJECT,
@@ -145,7 +144,7 @@ class TestCloudComposerDeleteEnvironmentOperator:
         )
 
     @mock.patch(COMPOSER_STRING.format("CloudComposerHook"))
-    @mock.patch(COMPOSER_TRIGGERS_STRING.format("CloudComposerHook"))
+    @mock.patch(COMPOSER_TRIGGERS_STRING.format("CloudComposerAsyncHook"))
     def test_execute_deferrable(self, mock_trigger_hook, mock_hook):
         op = CloudComposerDeleteEnvironmentOperator(
             task_id=TASK_ID,
@@ -185,7 +184,6 @@ class TestCloudComposerUpdateEnvironmentOperator:
         mock_hook.assert_called_once_with(
             gcp_conn_id=TEST_GCP_CONN_ID,
             impersonation_chain=TEST_IMPERSONATION_CHAIN,
-            delegate_to=TEST_DELEGATE_TO,
         )
         mock_hook.return_value.update_environment.assert_called_once_with(
             project_id=TEST_GCP_PROJECT,
@@ -200,7 +198,7 @@ class TestCloudComposerUpdateEnvironmentOperator:
 
     @mock.patch(COMPOSER_STRING.format("Environment.to_dict"))
     @mock.patch(COMPOSER_STRING.format("CloudComposerHook"))
-    @mock.patch(COMPOSER_TRIGGERS_STRING.format("CloudComposerHook"))
+    @mock.patch(COMPOSER_TRIGGERS_STRING.format("CloudComposerAsyncHook"))
     def test_execute_deferrable(self, mock_trigger_hook, mock_hook, to_dict_mode):
         op = CloudComposerUpdateEnvironmentOperator(
             task_id=TASK_ID,
@@ -241,7 +239,6 @@ class TestCloudComposerGetEnvironmentOperator:
         mock_hook.assert_called_once_with(
             gcp_conn_id=TEST_GCP_CONN_ID,
             impersonation_chain=TEST_IMPERSONATION_CHAIN,
-            delegate_to=TEST_DELEGATE_TO,
         )
         mock_hook.return_value.get_environment.assert_called_once_with(
             project_id=TEST_GCP_PROJECT,
@@ -269,7 +266,6 @@ class TestCloudComposerListEnvironmentsOperator:
         mock_hook.assert_called_once_with(
             gcp_conn_id=TEST_GCP_CONN_ID,
             impersonation_chain=TEST_IMPERSONATION_CHAIN,
-            delegate_to=TEST_DELEGATE_TO,
         )
         mock_hook.return_value.list_environments.assert_called_once_with(
             project_id=TEST_GCP_PROJECT,
@@ -298,7 +294,6 @@ class TestCloudComposerListImageVersionsOperator:
         mock_hook.assert_called_once_with(
             gcp_conn_id=TEST_GCP_CONN_ID,
             impersonation_chain=TEST_IMPERSONATION_CHAIN,
-            delegate_to=TEST_DELEGATE_TO,
         )
         mock_hook.return_value.list_image_versions.assert_called_once_with(
             project_id=TEST_GCP_PROJECT,

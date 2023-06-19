@@ -15,12 +15,17 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Objects relating to sourcing connections from metastore database"""
-import warnings
-from typing import TYPE_CHECKING, List, Optional
+"""Objects relating to sourcing connections from metastore database."""
+from __future__ import annotations
 
+import warnings
+from typing import TYPE_CHECKING
+
+from sqlalchemy.orm import Session
+
+from airflow.exceptions import RemovedInAirflow3Warning
 from airflow.secrets import BaseSecretsBackend
-from airflow.utils.session import provide_session
+from airflow.utils.session import NEW_SESSION, provide_session
 
 if TYPE_CHECKING:
     from airflow.models.connection import Connection
@@ -30,7 +35,7 @@ class MetastoreBackend(BaseSecretsBackend):
     """Retrieves Connection object and Variable from airflow metastore database."""
 
     @provide_session
-    def get_connection(self, conn_id, session=None) -> Optional['Connection']:
+    def get_connection(self, conn_id: str, session: Session = NEW_SESSION) -> Connection | None:
         from airflow.models.connection import Connection
 
         conn = session.query(Connection).filter(Connection.conn_id == conn_id).first()
@@ -38,11 +43,11 @@ class MetastoreBackend(BaseSecretsBackend):
         return conn
 
     @provide_session
-    def get_connections(self, conn_id, session=None) -> List['Connection']:
+    def get_connections(self, conn_id: str, session: Session = NEW_SESSION) -> list[Connection]:
         warnings.warn(
             "This method is deprecated. Please use "
             "`airflow.secrets.metastore.MetastoreBackend.get_connection`.",
-            PendingDeprecationWarning,
+            RemovedInAirflow3Warning,
             stacklevel=3,
         )
         conn = self.get_connection(conn_id=conn_id, session=session)
@@ -51,9 +56,9 @@ class MetastoreBackend(BaseSecretsBackend):
         return []
 
     @provide_session
-    def get_variable(self, key: str, session=None):
+    def get_variable(self, key: str, session: Session = NEW_SESSION) -> str | None:
         """
-        Get Airflow Variable from Metadata DB
+        Get Airflow Variable from Metadata DB.
 
         :param key: Variable Key
         :return: Variable Value

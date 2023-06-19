@@ -16,9 +16,11 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google Cloud Storage to SFTP operator."""
+from __future__ import annotations
+
 import os
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Sequence
 
 from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
@@ -40,7 +42,7 @@ class GCSToSFTPOperator(BaseOperator):
         with models.DAG(
             "example_gcs_to_sftp",
             start_date=datetime(2020, 6, 19),
-            schedule_interval=None,
+            schedule=None,
         ) as dag:
             # downloads file to /tmp/sftp/folder/subfolder/file.txt
             copy_file_from_gcs_to_sftp = GCSToSFTPOperator(
@@ -82,9 +84,6 @@ class GCSToSFTPOperator(BaseOperator):
     :param gcp_conn_id: (Optional) The connection ID used to connect to Google Cloud.
     :param sftp_conn_id: The sftp connection id. The name or identifier for
         establishing a connection to the SFTP server.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -113,8 +112,7 @@ class GCSToSFTPOperator(BaseOperator):
         move_object: bool = False,
         gcp_conn_id: str = "google_cloud_default",
         sftp_conn_id: str = "ssh_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -126,14 +124,12 @@ class GCSToSFTPOperator(BaseOperator):
         self.move_object = move_object
         self.gcp_conn_id = gcp_conn_id
         self.sftp_conn_id = sftp_conn_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
         self.sftp_dirs = None
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         gcs_hook = GCSHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
 
@@ -162,7 +158,7 @@ class GCSToSFTPOperator(BaseOperator):
             self._copy_single_object(gcs_hook, sftp_hook, self.source_object, destination_path)
             self.log.info("Done. Uploaded '%s' file to %s", self.source_object, destination_path)
 
-    def _resolve_destination_path(self, source_object: str, prefix: Optional[str] = None) -> str:
+    def _resolve_destination_path(self, source_object: str, prefix: str | None = None) -> str:
         if not self.keep_directory_structure:
             if prefix:
                 source_object = os.path.relpath(source_object, start=prefix)

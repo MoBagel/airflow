@@ -15,24 +15,24 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """
 This module contains a CloudDLPHook
 which allows you to connect to Google Cloud DLP service.
 
-.. spelling::
+.. spelling:word-list::
 
     ImageRedactionConfig
     RedactImageRequest
 """
+from __future__ import annotations
 
 import re
 import time
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Sequence
 
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.api_core.retry import Retry
-from google.cloud.dlp_v2 import DlpServiceClient
+from google.cloud.dlp import DlpServiceClient
 from google.cloud.dlp_v2.types import (
     ByteContentItem,
     ContentItem,
@@ -40,7 +40,6 @@ from google.cloud.dlp_v2.types import (
     DeidentifyContentResponse,
     DeidentifyTemplate,
     DlpJob,
-    FieldMask,
     InspectConfig,
     InspectContentResponse,
     InspectJobConfig,
@@ -54,6 +53,7 @@ from google.cloud.dlp_v2.types import (
     StoredInfoType,
     StoredInfoTypeConfig,
 )
+from google.protobuf.field_mask_pb2 import FieldMask
 
 from airflow.exceptions import AirflowException
 from airflow.providers.google.common.consts import CLIENT_INFO
@@ -72,9 +72,6 @@ class CloudDLPHook(GoogleBaseHook):
     on Google Cloud based data sets.
 
     :param gcp_conn_id: The connection ID to use when fetching connection info.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -88,35 +85,47 @@ class CloudDLPHook(GoogleBaseHook):
     def __init__(
         self,
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
     ) -> None:
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
         super().__init__(
             gcp_conn_id=gcp_conn_id,
-            delegate_to=delegate_to,
             impersonation_chain=impersonation_chain,
         )
-        self._client = None
+        self._client: DlpServiceClient | None = None
 
     def get_conn(self) -> DlpServiceClient:
         """
         Provides a client for interacting with the Cloud DLP API.
 
         :return: Google Cloud DLP API Client
-        :rtype: google.cloud.dlp_v2.DlpServiceClient
         """
         if not self._client:
-            self._client = DlpServiceClient(credentials=self._get_credentials(), client_info=CLIENT_INFO)
+            self._client = DlpServiceClient(credentials=self.get_credentials(), client_info=CLIENT_INFO)
         return self._client
+
+    def _project_deidentify_template_path(self, project_id, template_id):
+        return f"{DlpServiceClient.common_project_path(project_id)}/deidentifyTemplates/{template_id}"
+
+    def _project_stored_info_type_path(self, project_id, info_type_id):
+        return f"{DlpServiceClient.common_project_path(project_id)}/storedInfoTypes/{info_type_id}"
+
+    def _project_inspect_template_path(self, project_id, inspect_template_id):
+        return f"{DlpServiceClient.common_project_path(project_id)}/inspectTemplates/{inspect_template_id}"
 
     @GoogleBaseHook.fallback_to_default_project_id
     def cancel_dlp_job(
         self,
         dlp_job_id: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> None:
         """
         Starts asynchronous cancellation on a long-running DLP job.
@@ -138,17 +147,24 @@ class CloudDLPHook(GoogleBaseHook):
             raise AirflowException("Please provide the ID of the DLP job resource to be cancelled.")
 
         name = DlpServiceClient.dlp_job_path(project_id, dlp_job_id)
-        client.cancel_dlp_job(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        client.cancel_dlp_job(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     def create_deidentify_template(
         self,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        deidentify_template: Optional[Union[dict, DeidentifyTemplate]] = None,
-        template_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        deidentify_template: dict | DeidentifyTemplate | None = None,
+        template_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> DeidentifyTemplate:
         """
         Creates a deidentify template for re-using frequently used configuration for
@@ -167,23 +183,24 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.DeidentifyTemplate
         """
         client = self.get_conn()
         # Handle project_id from connection configuration
         project_id = project_id or self.project_id
 
         if organization_id:
-            parent = DlpServiceClient.organization_path(organization_id)
+            parent = DlpServiceClient.common_organization_path(organization_id)
         elif project_id:
-            parent = DlpServiceClient.project_path(project_id)
+            parent = DlpServiceClient.common_project_path(project_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         return client.create_deidentify_template(
-            parent=parent,
-            deidentify_template=deidentify_template,
-            template_id=template_id,
+            request=dict(
+                parent=parent,
+                deidentify_template=deidentify_template,
+                template_id=template_id,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -193,12 +210,12 @@ class CloudDLPHook(GoogleBaseHook):
     def create_dlp_job(
         self,
         project_id: str = PROVIDE_PROJECT_ID,
-        inspect_job: Optional[Union[dict, InspectJobConfig]] = None,
-        risk_job: Optional[Union[dict, RiskAnalysisJobConfig]] = None,
-        job_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        inspect_job: dict | InspectJobConfig | None = None,
+        risk_job: dict | RiskAnalysisJobConfig | None = None,
+        job_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         wait_until_finished: bool = True,
         time_to_sleep_in_seconds: int = 60,
     ) -> DlpJob:
@@ -219,18 +236,19 @@ class CloudDLPHook(GoogleBaseHook):
         :param metadata: (Optional) Additional metadata that is provided to the method.
         :param wait_until_finished: (Optional) If true, it will keep polling the job state
             until it is set to DONE.
-        :rtype: google.cloud.dlp_v2.types.DlpJob
         :param time_to_sleep_in_seconds: (Optional) Time to sleep, in seconds, between active checks
             of the operation results. Defaults to 60.
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         job = client.create_dlp_job(
-            parent=parent,
-            inspect_job=inspect_job,
-            risk_job=risk_job,
-            job_id=job_id,
+            request=dict(
+                parent=parent,
+                inspect_job=inspect_job,
+                risk_job=risk_job,
+                job_id=job_id,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -247,7 +265,7 @@ class CloudDLPHook(GoogleBaseHook):
         while wait_until_finished:
             job = self.get_dlp_job(dlp_job_id=job_name, project_id=project_id)
 
-            self.log.info("DLP job %s state: %s.", job.name, DlpJob.JobState.Name(job.state))
+            self.log.info("DLP job %s state: %s.", job.name, job.state)
 
             if job.state == DlpJob.JobState.DONE:
                 return job
@@ -266,13 +284,13 @@ class CloudDLPHook(GoogleBaseHook):
 
     def create_inspect_template(
         self,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        inspect_template: Optional[InspectTemplate] = None,
-        template_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        inspect_template: InspectTemplate | None = None,
+        template_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> InspectTemplate:
         """
         Creates an inspect template for re-using frequently used configuration for
@@ -291,7 +309,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.InspectTemplate
         """
         client = self.get_conn()
 
@@ -299,16 +316,18 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            parent = DlpServiceClient.organization_path(organization_id)
+            parent = DlpServiceClient.common_organization_path(organization_id)
         elif project_id:
-            parent = DlpServiceClient.project_path(project_id)
+            parent = DlpServiceClient.common_project_path(project_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         return client.create_inspect_template(
-            parent=parent,
-            inspect_template=inspect_template,
-            template_id=template_id,
+            request=dict(
+                parent=parent,
+                inspect_template=inspect_template,
+                template_id=template_id,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -318,11 +337,11 @@ class CloudDLPHook(GoogleBaseHook):
     def create_job_trigger(
         self,
         project_id: str = PROVIDE_PROJECT_ID,
-        job_trigger: Optional[Union[dict, JobTrigger]] = None,
-        trigger_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        job_trigger: dict | JobTrigger | None = None,
+        trigger_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> JobTrigger:
         """
         Creates a job trigger to run DLP actions such as scanning storage for sensitive
@@ -339,15 +358,16 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.JobTrigger
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         return client.create_job_trigger(
-            parent=parent,
-            job_trigger=job_trigger,
-            trigger_id=trigger_id,
+            request=dict(
+                parent=parent,
+                job_trigger=job_trigger,
+                trigger_id=trigger_id,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -355,13 +375,13 @@ class CloudDLPHook(GoogleBaseHook):
 
     def create_stored_info_type(
         self,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        config: Optional[Union[dict, StoredInfoTypeConfig]] = None,
-        stored_info_type_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        config: dict | StoredInfoTypeConfig | None = None,
+        stored_info_type_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> StoredInfoType:
         """
         Creates a pre-built stored info type to be used for inspection.
@@ -379,7 +399,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.StoredInfoType
         """
         client = self.get_conn()
 
@@ -387,16 +406,18 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            parent = DlpServiceClient.organization_path(organization_id)
+            parent = DlpServiceClient.common_organization_path(organization_id)
         elif project_id:
-            parent = DlpServiceClient.project_path(project_id)
+            parent = DlpServiceClient.common_project_path(project_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         return client.create_stored_info_type(
-            parent=parent,
-            config=config,
-            stored_info_type_id=stored_info_type_id,
+            request=dict(
+                parent=parent,
+                config=config,
+                stored_info_type_id=stored_info_type_id,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -406,14 +427,14 @@ class CloudDLPHook(GoogleBaseHook):
     def deidentify_content(
         self,
         project_id: str = PROVIDE_PROJECT_ID,
-        deidentify_config: Optional[Union[dict, DeidentifyConfig]] = None,
-        inspect_config: Optional[Union[dict, InspectConfig]] = None,
-        item: Optional[Union[dict, ContentItem]] = None,
-        inspect_template_name: Optional[str] = None,
-        deidentify_template_name: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        deidentify_config: dict | DeidentifyConfig | None = None,
+        inspect_config: dict | InspectConfig | None = None,
+        item: dict | ContentItem | None = None,
+        inspect_template_name: str | None = None,
+        deidentify_template_name: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> DeidentifyContentResponse:
         """
         De-identifies potentially sensitive info from a content item. This method has limits
@@ -439,18 +460,19 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.DeidentifyContentResponse
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         return client.deidentify_content(
-            parent=parent,
-            deidentify_config=deidentify_config,
-            inspect_config=inspect_config,
-            item=item,
-            inspect_template_name=inspect_template_name,
-            deidentify_template_name=deidentify_template_name,
+            request=dict(
+                parent=parent,
+                deidentify_config=deidentify_config,
+                inspect_config=inspect_config,
+                item=item,
+                inspect_template_name=inspect_template_name,
+                deidentify_template_name=deidentify_template_name,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -484,22 +506,29 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_deidentify_template_path(organization_id, template_id)
+            name = DlpServiceClient.deidentify_template_path(organization_id, template_id)
         elif project_id:
-            name = DlpServiceClient.project_deidentify_template_path(project_id, template_id)
+            name = self._project_deidentify_template_path(project_id, template_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
-        client.delete_deidentify_template(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        client.delete_deidentify_template(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def delete_dlp_job(
         self,
         dlp_job_id: str,
         project_id: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> None:
         """
         Deletes a long-running DLP job. This method indicates that the client is no longer
@@ -522,16 +551,23 @@ class CloudDLPHook(GoogleBaseHook):
             raise AirflowException("Please provide the ID of the DLP job resource to be cancelled.")
 
         name = DlpServiceClient.dlp_job_path(project_id, dlp_job_id)
-        client.delete_dlp_job(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        client.delete_dlp_job(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     def delete_inspect_template(
         self,
         template_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> None:
         """
         Deletes an inspect template.
@@ -558,22 +594,29 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_inspect_template_path(organization_id, template_id)
+            name = DlpServiceClient.inspect_template_path(organization_id, template_id)
         elif project_id:
-            name = DlpServiceClient.project_inspect_template_path(project_id, template_id)
+            name = self._project_inspect_template_path(project_id, template_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
-        client.delete_inspect_template(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        client.delete_inspect_template(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def delete_job_trigger(
         self,
         job_trigger_id: str,
         project_id: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> None:
         """
         Deletes a job trigger.
@@ -594,17 +637,24 @@ class CloudDLPHook(GoogleBaseHook):
         if not job_trigger_id:
             raise AirflowException("Please provide the ID of the DLP job trigger to be deleted.")
 
-        name = DlpServiceClient.project_job_trigger_path(project_id, job_trigger_id)
-        client.delete_job_trigger(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        name = DlpServiceClient.job_trigger_path(project_id, job_trigger_id)
+        client.delete_job_trigger(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     def delete_stored_info_type(
         self,
         stored_info_type_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> None:
         """
         Deletes a stored info type.
@@ -631,22 +681,29 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_stored_info_type_path(organization_id, stored_info_type_id)
+            name = DlpServiceClient.stored_info_type_path(organization_id, stored_info_type_id)
         elif project_id:
-            name = DlpServiceClient.project_stored_info_type_path(project_id, stored_info_type_id)
+            name = self._project_stored_info_type_path(project_id, stored_info_type_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
-        client.delete_stored_info_type(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        client.delete_stored_info_type(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     def get_deidentify_template(
         self,
         template_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> DeidentifyTemplate:
         """
         Gets a deidentify template.
@@ -663,7 +720,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.DeidentifyTemplate
         """
         client = self.get_conn()
 
@@ -674,22 +730,29 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_deidentify_template_path(organization_id, template_id)
+            name = DlpServiceClient.deidentify_template_path(organization_id, template_id)
         elif project_id:
-            name = DlpServiceClient.project_deidentify_template_path(project_id, template_id)
+            name = self._project_deidentify_template_path(project_id, template_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
-        return client.get_deidentify_template(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        return client.get_deidentify_template(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def get_dlp_job(
         self,
         dlp_job_id: str,
         project_id: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> DlpJob:
         """
         Gets the latest state of a long-running Dlp Job.
@@ -704,7 +767,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.DlpJob
         """
         client = self.get_conn()
 
@@ -712,16 +774,23 @@ class CloudDLPHook(GoogleBaseHook):
             raise AirflowException("Please provide the ID of the DLP job resource to be read.")
 
         name = DlpServiceClient.dlp_job_path(project_id, dlp_job_id)
-        return client.get_dlp_job(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        return client.get_dlp_job(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     def get_inspect_template(
         self,
         template_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> InspectTemplate:
         """
         Gets an inspect template.
@@ -738,7 +807,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.InspectTemplate
         """
         client = self.get_conn()
 
@@ -749,22 +817,29 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_inspect_template_path(organization_id, template_id)
+            name = DlpServiceClient.inspect_template_path(organization_id, template_id)
         elif project_id:
-            name = DlpServiceClient.project_inspect_template_path(project_id, template_id)
+            name = self._project_inspect_template_path(project_id, template_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
-        return client.get_inspect_template(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        return client.get_inspect_template(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def get_job_trigger(
         self,
         job_trigger_id: str,
         project_id: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> JobTrigger:
         """
         Gets a DLP job trigger.
@@ -779,24 +854,30 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.JobTrigger
         """
         client = self.get_conn()
 
         if not job_trigger_id:
             raise AirflowException("Please provide the ID of the DLP job trigger to be read.")
 
-        name = DlpServiceClient.project_job_trigger_path(project_id, job_trigger_id)
-        return client.get_job_trigger(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        name = DlpServiceClient.job_trigger_path(project_id, job_trigger_id)
+        return client.get_job_trigger(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     def get_stored_info_type(
         self,
         stored_info_type_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> StoredInfoType:
         """
         Gets a stored info type.
@@ -813,7 +894,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.StoredInfoType
         """
         client = self.get_conn()
 
@@ -824,24 +904,31 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_stored_info_type_path(organization_id, stored_info_type_id)
+            name = DlpServiceClient.stored_info_type_path(organization_id, stored_info_type_id)
         elif project_id:
-            name = DlpServiceClient.project_stored_info_type_path(project_id, stored_info_type_id)
+            name = self._project_stored_info_type_path(project_id, stored_info_type_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
-        return client.get_stored_info_type(name=name, retry=retry, timeout=timeout, metadata=metadata)
+        return client.get_stored_info_type(
+            request=dict(
+                name=name,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def inspect_content(
         self,
         project_id: str,
-        inspect_config: Optional[Union[dict, InspectConfig]] = None,
-        item: Optional[Union[dict, ContentItem]] = None,
-        inspect_template_name: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        inspect_config: dict | InspectConfig | None = None,
+        item: dict | ContentItem | None = None,
+        inspect_template_name: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> InspectContentResponse:
         """
         Finds potentially sensitive info in content. This method has limits on input size,
@@ -861,16 +948,17 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.InspectContentResponse
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         return client.inspect_content(
-            parent=parent,
-            inspect_config=inspect_config,
-            item=item,
-            inspect_template_name=inspect_template_name,
+            request=dict(
+                parent=parent,
+                inspect_config=inspect_config,
+                item=item,
+                inspect_template_name=inspect_template_name,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -878,14 +966,14 @@ class CloudDLPHook(GoogleBaseHook):
 
     def list_deidentify_templates(
         self,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        page_size: Optional[int] = None,
-        order_by: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-    ) -> List[DeidentifyTemplate]:
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        page_size: int | None = None,
+        order_by: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
+    ) -> list[DeidentifyTemplate]:
         """
         Lists deidentify templates.
 
@@ -904,7 +992,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: List[google.cloud.dlp_v2.types.DeidentifyTemplate]
         """
         client = self.get_conn()
 
@@ -912,16 +999,18 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            parent = DlpServiceClient.organization_path(organization_id)
+            parent = DlpServiceClient.common_organization_path(organization_id)
         elif project_id:
-            parent = DlpServiceClient.project_path(project_id)
+            parent = DlpServiceClient.common_project_path(project_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         results = client.list_deidentify_templates(
-            parent=parent,
-            page_size=page_size,
-            order_by=order_by,
+            request=dict(
+                parent=parent,
+                page_size=page_size,
+                order_by=order_by,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -933,14 +1022,14 @@ class CloudDLPHook(GoogleBaseHook):
     def list_dlp_jobs(
         self,
         project_id: str,
-        results_filter: Optional[str] = None,
-        page_size: Optional[int] = None,
-        job_type: Optional[str] = None,
-        order_by: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-    ) -> List[DlpJob]:
+        results_filter: str | None = None,
+        page_size: int | None = None,
+        job_type: str | None = None,
+        order_by: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
+    ) -> list[DlpJob]:
         """
         Lists DLP jobs that match the specified filter in the request.
 
@@ -959,17 +1048,18 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: List[google.cloud.dlp_v2.types.DlpJob]
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         results = client.list_dlp_jobs(
-            parent=parent,
-            filter_=results_filter,
-            page_size=page_size,
-            type_=job_type,
-            order_by=order_by,
+            request=dict(
+                parent=parent,
+                filter=results_filter,
+                page_size=page_size,
+                type_=job_type,
+                order_by=order_by,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -978,11 +1068,11 @@ class CloudDLPHook(GoogleBaseHook):
 
     def list_info_types(
         self,
-        language_code: Optional[str] = None,
-        results_filter: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        language_code: str | None = None,
+        results_filter: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> ListInfoTypesResponse:
         """
         Returns a list of the sensitive information types that the DLP API supports.
@@ -997,13 +1087,14 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.ListInfoTypesResponse
         """
         client = self.get_conn()
 
         return client.list_info_types(
-            language_code=language_code,
-            filter_=results_filter,
+            request=dict(
+                language_code=language_code,
+                filter=results_filter,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1011,14 +1102,14 @@ class CloudDLPHook(GoogleBaseHook):
 
     def list_inspect_templates(
         self,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        page_size: Optional[int] = None,
-        order_by: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-    ) -> List[InspectTemplate]:
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        page_size: int | None = None,
+        order_by: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
+    ) -> list[InspectTemplate]:
         """
         Lists inspect templates.
 
@@ -1037,7 +1128,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: List[google.cloud.dlp_v2.types.InspectTemplate]
         """
         client = self.get_conn()
 
@@ -1045,16 +1135,18 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            parent = DlpServiceClient.organization_path(organization_id)
+            parent = DlpServiceClient.common_organization_path(organization_id)
         elif project_id:
-            parent = DlpServiceClient.project_path(project_id)
+            parent = DlpServiceClient.common_project_path(project_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         results = client.list_inspect_templates(
-            parent=parent,
-            page_size=page_size,
-            order_by=order_by,
+            request=dict(
+                parent=parent,
+                page_size=page_size,
+                order_by=order_by,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1065,13 +1157,13 @@ class CloudDLPHook(GoogleBaseHook):
     def list_job_triggers(
         self,
         project_id: str,
-        page_size: Optional[int] = None,
-        order_by: Optional[str] = None,
-        results_filter: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-    ) -> List[JobTrigger]:
+        page_size: int | None = None,
+        order_by: str | None = None,
+        results_filter: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
+    ) -> list[JobTrigger]:
         """
         Lists job triggers.
 
@@ -1089,16 +1181,17 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: List[google.cloud.dlp_v2.types.JobTrigger]
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         results = client.list_job_triggers(
-            parent=parent,
-            page_size=page_size,
-            order_by=order_by,
-            filter_=results_filter,
+            request=dict(
+                parent=parent,
+                page_size=page_size,
+                order_by=order_by,
+                filter=results_filter,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1107,14 +1200,14 @@ class CloudDLPHook(GoogleBaseHook):
 
     def list_stored_info_types(
         self,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        page_size: Optional[int] = None,
-        order_by: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
-    ) -> List[StoredInfoType]:
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        page_size: int | None = None,
+        order_by: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
+    ) -> list[StoredInfoType]:
         """
         Lists stored info types.
 
@@ -1133,7 +1226,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: List[google.cloud.dlp_v2.types.StoredInfoType]
         """
         client = self.get_conn()
 
@@ -1141,16 +1233,18 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            parent = DlpServiceClient.organization_path(organization_id)
+            parent = DlpServiceClient.common_organization_path(organization_id)
         elif project_id:
-            parent = DlpServiceClient.project_path(project_id)
+            parent = DlpServiceClient.common_project_path(project_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         results = client.list_stored_info_types(
-            parent=parent,
-            page_size=page_size,
-            order_by=order_by,
+            request=dict(
+                parent=parent,
+                page_size=page_size,
+                order_by=order_by,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1161,15 +1255,13 @@ class CloudDLPHook(GoogleBaseHook):
     def redact_image(
         self,
         project_id: str,
-        inspect_config: Optional[Union[dict, InspectConfig]] = None,
-        image_redaction_configs: Optional[
-            Union[List[dict], List[RedactImageRequest.ImageRedactionConfig]]
-        ] = None,
-        include_findings: Optional[bool] = None,
-        byte_item: Optional[Union[dict, ByteContentItem]] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        inspect_config: dict | InspectConfig | None = None,
+        image_redaction_configs: None | (list[dict] | list[RedactImageRequest.ImageRedactionConfig]) = None,
+        include_findings: bool | None = None,
+        byte_item: dict | ByteContentItem | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> RedactImageResponse:
         """
         Redacts potentially sensitive info from an image. This method has limits on
@@ -1182,7 +1274,7 @@ class CloudDLPHook(GoogleBaseHook):
             here will override the template referenced by the inspect_template_name argument.
         :param image_redaction_configs: (Optional) The configuration for specifying what
             content to redact from images.
-            List[google.cloud.dlp_v2.types.RedactImageRequest.ImageRedactionConfig]
+            list[google.cloud.dlp_v2.types.RedactImageRequest.ImageRedactionConfig]
         :param include_findings: (Optional) Whether the response should include findings
             along with the redacted image.
         :param byte_item: (Optional) The content must be PNG, JPEG, SVG or BMP.
@@ -1192,17 +1284,18 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.RedactImageResponse
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         return client.redact_image(
-            parent=parent,
-            inspect_config=inspect_config,
-            image_redaction_configs=image_redaction_configs,
-            include_findings=include_findings,
-            byte_item=byte_item,
+            request=dict(
+                parent=parent,
+                inspect_config=inspect_config,
+                image_redaction_configs=image_redaction_configs,
+                include_findings=include_findings,
+                byte_item=byte_item,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1212,14 +1305,14 @@ class CloudDLPHook(GoogleBaseHook):
     def reidentify_content(
         self,
         project_id: str,
-        reidentify_config: Optional[Union[dict, DeidentifyConfig]] = None,
-        inspect_config: Optional[Union[dict, InspectConfig]] = None,
-        item: Optional[Union[dict, ContentItem]] = None,
-        inspect_template_name: Optional[str] = None,
-        reidentify_template_name: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        reidentify_config: dict | DeidentifyConfig | None = None,
+        inspect_config: dict | InspectConfig | None = None,
+        item: dict | ContentItem | None = None,
+        inspect_template_name: str | None = None,
+        reidentify_template_name: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> ReidentifyContentResponse:
         """
         Re-identifies content that has been de-identified.
@@ -1242,18 +1335,19 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.ReidentifyContentResponse
         """
         client = self.get_conn()
 
-        parent = DlpServiceClient.project_path(project_id)
+        parent = DlpServiceClient.common_project_path(project_id)
         return client.reidentify_content(
-            parent=parent,
-            reidentify_config=reidentify_config,
-            inspect_config=inspect_config,
-            item=item,
-            inspect_template_name=inspect_template_name,
-            reidentify_template_name=reidentify_template_name,
+            request=dict(
+                parent=parent,
+                reidentify_config=reidentify_config,
+                inspect_config=inspect_config,
+                item=item,
+                inspect_template_name=inspect_template_name,
+                reidentify_template_name=reidentify_template_name,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1262,13 +1356,13 @@ class CloudDLPHook(GoogleBaseHook):
     def update_deidentify_template(
         self,
         template_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        deidentify_template: Optional[Union[dict, DeidentifyTemplate]] = None,
-        update_mask: Optional[Union[dict, FieldMask]] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        deidentify_template: dict | DeidentifyTemplate | None = None,
+        update_mask: dict | FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> DeidentifyTemplate:
         """
         Updates the deidentify template.
@@ -1287,7 +1381,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.DeidentifyTemplate
         """
         client = self.get_conn()
 
@@ -1298,16 +1391,18 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_deidentify_template_path(organization_id, template_id)
+            name = DlpServiceClient.deidentify_template_path(organization_id, template_id)
         elif project_id:
-            name = DlpServiceClient.project_deidentify_template_path(project_id, template_id)
+            name = self._project_deidentify_template_path(project_id, template_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         return client.update_deidentify_template(
-            name=name,
-            deidentify_template=deidentify_template,
-            update_mask=update_mask,
+            request=dict(
+                name=name,
+                deidentify_template=deidentify_template,
+                update_mask=update_mask,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1316,13 +1411,13 @@ class CloudDLPHook(GoogleBaseHook):
     def update_inspect_template(
         self,
         template_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        inspect_template: Optional[Union[dict, InspectTemplate]] = None,
-        update_mask: Optional[Union[dict, FieldMask]] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        inspect_template: dict | InspectTemplate | None = None,
+        update_mask: dict | FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> InspectTemplate:
         """
         Updates the inspect template.
@@ -1341,7 +1436,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.InspectTemplate
         """
         client = self.get_conn()
 
@@ -1351,16 +1445,18 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_inspect_template_path(organization_id, template_id)
+            name = DlpServiceClient.inspect_template_path(organization_id, template_id)
         elif project_id:
-            name = DlpServiceClient.project_inspect_template_path(project_id, template_id)
+            name = self._project_inspect_template_path(project_id, template_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         return client.update_inspect_template(
-            name=name,
-            inspect_template=inspect_template,
-            update_mask=update_mask,
+            request=dict(
+                name=name,
+                inspect_template=inspect_template,
+                update_mask=update_mask,
+            ),
             retry=retry,
             timeout=timeout,
             metadata=metadata,
@@ -1371,11 +1467,11 @@ class CloudDLPHook(GoogleBaseHook):
         self,
         job_trigger_id: str,
         project_id: str,
-        job_trigger: Optional[Union[dict, JobTrigger]] = None,
-        update_mask: Optional[Union[dict, FieldMask]] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        job_trigger: dict | JobTrigger | None = None,
+        update_mask: dict | FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> JobTrigger:
         """
         Updates a job trigger.
@@ -1392,14 +1488,19 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.JobTrigger
         """
         client = self.get_conn()
+
+        if isinstance(job_trigger, dict):
+            job_trigger = JobTrigger(**job_trigger)
+
+        if isinstance(update_mask, dict):
+            update_mask = FieldMask(**update_mask)
 
         if not job_trigger_id:
             raise AirflowException("Please provide the ID of the DLP job trigger to be updated.")
 
-        name = DlpServiceClient.project_job_trigger_path(project_id, job_trigger_id)
+        name = DlpServiceClient.job_trigger_path(project_id, job_trigger_id)
         return client.update_job_trigger(
             name=name,
             job_trigger=job_trigger,
@@ -1412,13 +1513,13 @@ class CloudDLPHook(GoogleBaseHook):
     def update_stored_info_type(
         self,
         stored_info_type_id: str,
-        organization_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        config: Optional[Union[dict, StoredInfoTypeConfig]] = None,
-        update_mask: Optional[Union[dict, FieldMask]] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        organization_id: str | None = None,
+        project_id: str | None = None,
+        config: dict | StoredInfoTypeConfig | None = None,
+        update_mask: dict | FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> StoredInfoType:
         """
         Updates the stored info type by creating a new version.
@@ -1438,7 +1539,6 @@ class CloudDLPHook(GoogleBaseHook):
             to complete. Note that if retry is specified, the timeout applies to each
             individual attempt.
         :param metadata: (Optional) Additional metadata that is provided to the method.
-        :rtype: google.cloud.dlp_v2.types.StoredInfoType
         """
         client = self.get_conn()
 
@@ -1449,12 +1549,19 @@ class CloudDLPHook(GoogleBaseHook):
         project_id = project_id or self.project_id
 
         if organization_id:
-            name = DlpServiceClient.organization_stored_info_type_path(organization_id, stored_info_type_id)
+            name = DlpServiceClient.stored_info_type_path(organization_id, stored_info_type_id)
         elif project_id:
-            name = DlpServiceClient.project_stored_info_type_path(project_id, stored_info_type_id)
+            name = self._project_stored_info_type_path(project_id, stored_info_type_id)
         else:
             raise AirflowException("Please provide either organization_id or project_id.")
 
         return client.update_stored_info_type(
-            name=name, config=config, update_mask=update_mask, retry=retry, timeout=timeout, metadata=metadata
+            request=dict(
+                name=name,
+                config=config,
+                update_mask=update_mask,
+            ),
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
         )

@@ -14,8 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-import unittest
 from copy import deepcopy
 
 import pytest
@@ -23,7 +23,7 @@ import pytest
 from airflow.providers.google.cloud.utils.field_sanitizer import GcpBodyFieldSanitizer
 
 
-class TestGcpBodyFieldSanitizer(unittest.TestCase):
+class TestGcpBodyFieldSanitizer:
     def test_sanitize_should_sanitize_empty_body_and_fields(self):
         body = {}
         fields_to_sanitize = []

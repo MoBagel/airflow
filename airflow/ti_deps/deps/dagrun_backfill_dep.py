@@ -15,8 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """This module defines dep for making sure DagRun not a backfill."""
+from __future__ import annotations
 
 from airflow.ti_deps.deps.base_ti_dep import BaseTIDep
 from airflow.utils.session import provide_session
@@ -24,7 +24,7 @@ from airflow.utils.types import DagRunType
 
 
 class DagRunNotBackfillDep(BaseTIDep):
-    """Dep for valid DagRun run_id to schedule from scheduler"""
+    """Dep for valid DagRun run_id to schedule from scheduler."""
 
     NAME = "DagRun is not backfill job"
     IGNORABLE = True

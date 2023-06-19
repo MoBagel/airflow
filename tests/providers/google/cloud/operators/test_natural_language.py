@@ -15,11 +15,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-import unittest
+from __future__ import annotations
+
 from unittest.mock import patch
 
-from google.cloud.language_v1.proto.language_service_pb2 import (
+from google.cloud.language_v1 import (
     AnalyzeEntitiesResponse,
     AnalyzeEntitySentimentResponse,
     AnalyzeSentimentResponse,
@@ -46,7 +46,7 @@ ANALYZE_SENTIMENT_RESPONSE = AnalyzeSentimentResponse()
 ENCODING_TYPE = "UTF32"
 
 
-class TestCloudLanguageAnalyzeEntitiesOperator(unittest.TestCase):
+class TestCloudLanguageAnalyzeEntitiesOperator:
     @patch("airflow.providers.google.cloud.operators.natural_language.CloudNaturalLanguageHook")
     def test_minimal_green_path(self, hook_mock):
         hook_mock.return_value.analyze_entities.return_value = ANALYZE_ENTITIES_RESPONSE
@@ -55,7 +55,7 @@ class TestCloudLanguageAnalyzeEntitiesOperator(unittest.TestCase):
         assert resp == {}
 
 
-class TestCloudLanguageAnalyzeEntitySentimentOperator(unittest.TestCase):
+class TestCloudLanguageAnalyzeEntitySentimentOperator:
     @patch("airflow.providers.google.cloud.operators.natural_language.CloudNaturalLanguageHook")
     def test_minimal_green_path(self, hook_mock):
         hook_mock.return_value.analyze_entity_sentiment.return_value = ANALYZE_ENTITY_SENTIMENT_RESPONSE
@@ -64,7 +64,7 @@ class TestCloudLanguageAnalyzeEntitySentimentOperator(unittest.TestCase):
         assert resp == {}
 
 
-class TestCloudLanguageAnalyzeSentimentOperator(unittest.TestCase):
+class TestCloudLanguageAnalyzeSentimentOperator:
     @patch("airflow.providers.google.cloud.operators.natural_language.CloudNaturalLanguageHook")
     def test_minimal_green_path(self, hook_mock):
         hook_mock.return_value.analyze_sentiment.return_value = ANALYZE_SENTIMENT_RESPONSE
@@ -73,7 +73,7 @@ class TestCloudLanguageAnalyzeSentimentOperator(unittest.TestCase):
         assert resp == {}
 
 
-class TestCloudLanguageClassifyTextOperator(unittest.TestCase):
+class TestCloudLanguageClassifyTextOperator:
     @patch("airflow.providers.google.cloud.operators.natural_language.CloudNaturalLanguageHook")
     def test_minimal_green_path(self, hook_mock):
         hook_mock.return_value.classify_text.return_value = CLASSIFY_TEXT_RESPONSE

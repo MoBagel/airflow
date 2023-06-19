@@ -14,8 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-from typing import Dict, Optional, Sequence, Tuple, Union
+from typing import Sequence
 
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.api_core.operation import Operation
@@ -38,24 +39,32 @@ class WorkflowsHook(GoogleBaseHook):
     keyword arguments rather than positional.
     """
 
+    def __init__(self, **kwargs):
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
+        super().__init__(**kwargs)
+
     def get_workflows_client(self) -> WorkflowsClient:
         """Returns WorkflowsClient."""
-        return WorkflowsClient(credentials=self._get_credentials(), client_info=CLIENT_INFO)
+        return WorkflowsClient(credentials=self.get_credentials(), client_info=CLIENT_INFO)
 
     def get_executions_client(self) -> ExecutionsClient:
         """Returns ExecutionsClient."""
-        return ExecutionsClient(credentials=self._get_credentials(), client_info=CLIENT_INFO)
+        return ExecutionsClient(credentials=self.get_credentials(), client_info=CLIENT_INFO)
 
     @GoogleBaseHook.fallback_to_default_project_id
     def create_workflow(
         self,
-        workflow: Dict,
+        workflow: dict,
         workflow_id: str,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Operation:
         """
         Creates a new workflow. If a workflow with the specified name
@@ -89,9 +98,9 @@ class WorkflowsHook(GoogleBaseHook):
         workflow_id: str,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Workflow:
         """
         Gets details of a single Workflow.
@@ -112,11 +121,11 @@ class WorkflowsHook(GoogleBaseHook):
 
     def update_workflow(
         self,
-        workflow: Union[Dict, Workflow],
-        update_mask: Optional[FieldMask] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        workflow: dict | Workflow,
+        update_mask: FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Operation:
         """
         Updates an existing workflow.
@@ -150,9 +159,9 @@ class WorkflowsHook(GoogleBaseHook):
         workflow_id: str,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Operation:
         """
         Deletes a workflow with the specified name.
@@ -178,11 +187,11 @@ class WorkflowsHook(GoogleBaseHook):
         self,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        filter_: Optional[str] = None,
-        order_by: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        filter_: str | None = None,
+        order_by: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> ListWorkflowsPager:
         """
         Lists Workflows in a given project and location.
@@ -217,11 +226,11 @@ class WorkflowsHook(GoogleBaseHook):
         self,
         workflow_id: str,
         location: str,
-        execution: Dict,
+        execution: dict,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Execution:
         """
         Creates a new execution using the latest revision of
@@ -240,6 +249,7 @@ class WorkflowsHook(GoogleBaseHook):
         metadata = metadata or ()
         client = self.get_executions_client()
         parent = f"projects/{project_id}/locations/{location}/workflows/{workflow_id}"
+        execution = {k: str(v) if isinstance(v, dict) else v for k, v in execution.items()}
         return client.create_execution(
             request={"parent": parent, "execution": execution},
             retry=retry,
@@ -254,9 +264,9 @@ class WorkflowsHook(GoogleBaseHook):
         execution_id: str,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Execution:
         """
         Returns an execution for the given ``workflow_id`` and ``execution_id``.
@@ -283,9 +293,9 @@ class WorkflowsHook(GoogleBaseHook):
         execution_id: str,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Execution:
         """
         Cancels an execution using the given ``workflow_id`` and ``execution_id``.
@@ -313,9 +323,9 @@ class WorkflowsHook(GoogleBaseHook):
         workflow_id: str,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> ListExecutionsPager:
         """
         Returns a list of executions which belong to the

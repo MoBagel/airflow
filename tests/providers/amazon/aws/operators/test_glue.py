@@ -14,73 +14,196 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-import unittest
 from unittest import mock
 
-from parameterized import parameterized
+import pytest
 
-from airflow import configuration
+from airflow.configuration import conf
+from airflow.exceptions import TaskDeferred
+from airflow.models import TaskInstance
 from airflow.providers.amazon.aws.hooks.glue import GlueJobHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.providers.amazon.aws.links.glue import GlueJobRunDetailsLink
 from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
 
+TASK_ID = "test_glue_operator"
+DAG_ID = "test_dag_id"
+JOB_NAME = "test_job_name/with_slash"
+JOB_RUN_ID = "11111"
 
-class TestGlueJobOperator(unittest.TestCase):
-    @mock.patch('airflow.providers.amazon.aws.hooks.glue.GlueJobHook')
-    def setUp(self, glue_hook_mock):
-        configuration.load_test_config()
 
-        self.glue_hook_mock = glue_hook_mock
+class TestGlueJobOperator:
+    @pytest.fixture(autouse=True)
+    def setup_method(self):
+        conf.load_test_config()
 
-    @parameterized.expand(
+    def test_render_template(self, create_task_instance_of_operator):
+        ti: TaskInstance = create_task_instance_of_operator(
+            GlueJobOperator,
+            dag_id=DAG_ID,
+            task_id=TASK_ID,
+            script_location="{{ dag.dag_id }}",
+            script_args="{{ dag.dag_id }}",
+            create_job_kwargs="{{ dag.dag_id }}",
+            iam_role_name="{{ dag.dag_id }}",
+            s3_bucket="{{ dag.dag_id }}",
+            job_name="{{ dag.dag_id }}",
+        )
+        rendered_template: GlueJobOperator = ti.render_templates()
+
+        assert DAG_ID == rendered_template.script_location
+        assert DAG_ID == rendered_template.script_args
+        assert DAG_ID == rendered_template.create_job_kwargs
+        assert DAG_ID == rendered_template.iam_role_name
+        assert DAG_ID == rendered_template.s3_bucket
+        assert DAG_ID == rendered_template.job_name
+
+    @pytest.mark.parametrize(
+        "script_location",
         [
             "s3://glue-examples/glue-scripts/sample_aws_glue_job.py",
             "/glue-examples/glue-scripts/sample_aws_glue_job.py",
-        ]
+        ],
     )
-    @mock.patch.object(GlueJobHook, 'get_job_state')
-    @mock.patch.object(GlueJobHook, 'initialize_job')
+    @mock.patch.object(GlueJobHook, "print_job_logs")
+    @mock.patch.object(GlueJobHook, "get_job_state")
+    @mock.patch.object(GlueJobHook, "initialize_job")
     @mock.patch.object(GlueJobHook, "get_conn")
     @mock.patch.object(S3Hook, "load_file")
     def test_execute_without_failure(
-        self, script_location, mock_load_file, mock_get_conn, mock_initialize_job, mock_get_job_state
+        self,
+        mock_load_file,
+        mock_get_conn,
+        mock_initialize_job,
+        mock_get_job_state,
+        mock_print_job_logs,
+        script_location,
     ):
         glue = GlueJobOperator(
-            task_id='test_glue_operator',
-            job_name='my_test_job',
+            task_id=TASK_ID,
+            job_name=JOB_NAME,
             script_location=script_location,
-            aws_conn_id='aws_default',
-            region_name='us-west-2',
-            s3_bucket='some_bucket',
-            iam_role_name='my_test_role',
+            aws_conn_id="aws_default",
+            region_name="us-west-2",
+            s3_bucket="some_bucket",
+            iam_role_name="my_test_role",
         )
-        mock_initialize_job.return_value = {'JobRunState': 'RUNNING', 'JobRunId': '11111'}
-        mock_get_job_state.return_value = 'SUCCEEDED'
-        glue.execute({})
-        mock_initialize_job.assert_called_once_with({}, {})
-        assert glue.job_name == 'my_test_job'
+        mock_initialize_job.return_value = {"JobRunState": "RUNNING", "JobRunId": JOB_RUN_ID}
+        mock_get_job_state.return_value = "SUCCEEDED"
 
-    @mock.patch.object(GlueJobHook, 'job_completion')
-    @mock.patch.object(GlueJobHook, 'initialize_job')
+        glue.execute(mock.MagicMock())
+
+        mock_initialize_job.assert_called_once_with({}, {})
+        mock_print_job_logs.assert_not_called()
+        assert glue.job_name == JOB_NAME
+
+    @mock.patch.object(GlueJobHook, "initialize_job")
+    @mock.patch.object(GlueJobHook, "get_conn")
+    def test_execute_deferrable(self, _, mock_initialize_job):
+        glue = GlueJobOperator(
+            task_id=TASK_ID,
+            job_name=JOB_NAME,
+            script_location="s3://folder/file",
+            aws_conn_id="aws_default",
+            region_name="us-west-2",
+            s3_bucket="some_bucket",
+            iam_role_name="my_test_role",
+            deferrable=True,
+        )
+        mock_initialize_job.return_value = {"JobRunState": "RUNNING", "JobRunId": JOB_RUN_ID}
+
+        with pytest.raises(TaskDeferred) as defer:
+            glue.execute(mock.MagicMock())
+
+        assert defer.value.trigger.job_name == JOB_NAME
+        assert defer.value.trigger.run_id == JOB_RUN_ID
+
+    @mock.patch.object(GlueJobHook, "print_job_logs")
+    @mock.patch.object(GlueJobHook, "get_job_state")
+    @mock.patch.object(GlueJobHook, "initialize_job")
+    @mock.patch.object(GlueJobHook, "get_conn")
+    @mock.patch.object(S3Hook, "load_file")
+    def test_execute_with_verbose_logging(
+        self, mock_load_file, mock_get_conn, mock_initialize_job, mock_get_job_state, mock_print_job_logs
+    ):
+        glue = GlueJobOperator(
+            task_id=TASK_ID,
+            job_name=JOB_NAME,
+            script_location="s3_uri",
+            s3_bucket="bucket_name",
+            iam_role_name="role_arn",
+            verbose=True,
+        )
+        mock_initialize_job.return_value = {"JobRunState": "RUNNING", "JobRunId": JOB_RUN_ID}
+        mock_get_job_state.return_value = "SUCCEEDED"
+
+        glue.execute(mock.MagicMock())
+
+        mock_initialize_job.assert_called_once_with({}, {})
+        mock_print_job_logs.assert_called_once_with(
+            job_name=JOB_NAME, run_id=JOB_RUN_ID, continuation_tokens=mock.ANY
+        )
+        assert glue.job_name == JOB_NAME
+
+    @mock.patch.object(GlueJobHook, "print_job_logs")
+    @mock.patch.object(GlueJobHook, "job_completion")
+    @mock.patch.object(GlueJobHook, "initialize_job")
     @mock.patch.object(GlueJobHook, "get_conn")
     @mock.patch.object(S3Hook, "load_file")
     def test_execute_without_waiting_for_completion(
-        self, mock_load_file, mock_get_conn, mock_initialize_job, mock_job_completion
+        self, mock_load_file, mock_get_conn, mock_initialize_job, mock_job_completion, mock_print_job_logs
     ):
         glue = GlueJobOperator(
-            task_id='test_glue_operator',
-            job_name='my_test_job',
-            script_location='s3://glue-examples/glue-scripts/sample_aws_glue_job.py',
-            aws_conn_id='aws_default',
-            region_name='us-west-2',
-            s3_bucket='some_bucket',
-            iam_role_name='my_test_role',
+            task_id=TASK_ID,
+            job_name=JOB_NAME,
+            script_location="s3://glue-examples/glue-scripts/sample_aws_glue_job.py",
+            aws_conn_id="aws_default",
+            region_name="us-west-2",
+            s3_bucket="some_bucket",
+            iam_role_name="my_test_role",
             wait_for_completion=False,
         )
-        mock_initialize_job.return_value = {'JobRunState': 'RUNNING', 'JobRunId': '11111'}
-        job_run_id = glue.execute({})
+        mock_initialize_job.return_value = {"JobRunState": "RUNNING", "JobRunId": JOB_RUN_ID}
+
+        job_run_id = glue.execute(mock.MagicMock())
+
         mock_initialize_job.assert_called_once_with({}, {})
         mock_job_completion.assert_not_called()
-        assert glue.job_name == 'my_test_job'
-        assert job_run_id == '11111'
+        mock_print_job_logs.assert_not_called()
+        assert glue.job_name == JOB_NAME
+        assert job_run_id == JOB_RUN_ID
+
+    @mock.patch.object(GlueJobHook, "print_job_logs")
+    @mock.patch.object(GlueJobHook, "get_job_state")
+    @mock.patch.object(GlueJobHook, "initialize_job")
+    @mock.patch.object(GlueJobHook, "get_conn")
+    @mock.patch.object(S3Hook, "load_file")
+    def test_log_correct_url(
+        self, mock_load_file, mock_get_conn, mock_initialize_job, mock_get_job_state, mock_print_job_logs
+    ):
+        region = "us-west-2"
+        glue = GlueJobOperator(
+            task_id=TASK_ID,
+            job_name=JOB_NAME,
+            script_location="s3://glue-examples/glue-scripts/sample_aws_glue_job.py",
+            aws_conn_id="aws_default",
+            region_name=region,
+            s3_bucket="some_bucket",
+            iam_role_name="my_test_role",
+        )
+        mock_initialize_job.return_value = {"JobRunState": "RUNNING", "JobRunId": JOB_RUN_ID}
+        mock_get_job_state.return_value = "SUCCEEDED"
+
+        aws_domain = GlueJobRunDetailsLink.get_aws_domain("aws")
+        glue_job_run_url = (
+            f"https://console.{aws_domain}/gluestudio/home?region="
+            + f"{region}#/job/test_job_name%2Fwith_slash/run/{JOB_RUN_ID}"
+        )
+
+        with mock.patch.object(glue.log, "info") as mock_log_info:
+            job_run_id = glue.execute(mock.MagicMock())
+            assert job_run_id == JOB_RUN_ID
+
+        mock_log_info.assert_any_call("You can monitor this Glue Job run at: %s", glue_job_run_url)

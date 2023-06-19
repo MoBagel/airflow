@@ -19,9 +19,11 @@
 This module contains Azure Data Lake Storage to
 Google Cloud Storage operator.
 """
+from __future__ import annotations
+
 import os
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Sequence
 
 from airflow.providers.google.cloud.hooks.gcs import GCSHook, _parse_gcs_url
 from airflow.providers.microsoft.azure.hooks.data_lake import AzureDataLakeHook
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
 
 class ADLSToGCSOperator(ADLSListOperator):
     """
-    Synchronizes an Azure Data Lake Storage path with a GCS bucket
+    Synchronizes an Azure Data Lake Storage path with a GCS bucket.
 
     :param src_adls: The Azure Data Lake path to find the objects (templated)
     :param dest_gcs: The Google Cloud Storage bucket and prefix to
@@ -43,9 +45,6 @@ class ADLSToGCSOperator(ADLSListOperator):
     :param azure_data_lake_conn_id: The connection ID to use when
         connecting to Azure Data Lake Storage.
     :param gcp_conn_id: (Optional) The connection ID used to connect to Google Cloud.
-    :param delegate_to: Google account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param google_impersonation_chain: Optional Google service account to impersonate using
         short-term credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -95,11 +94,11 @@ class ADLSToGCSOperator(ADLSListOperator):
     """
 
     template_fields: Sequence[str] = (
-        'src_adls',
-        'dest_gcs',
-        'google_impersonation_chain',
+        "src_adls",
+        "dest_gcs",
+        "google_impersonation_chain",
     )
-    ui_color = '#f0eee4'
+    ui_color = "#f0eee4"
 
     def __init__(
         self,
@@ -107,11 +106,10 @@ class ADLSToGCSOperator(ADLSListOperator):
         src_adls: str,
         dest_gcs: str,
         azure_data_lake_conn_id: str,
-        gcp_conn_id: str = 'google_cloud_default',
-        delegate_to: Optional[str] = None,
+        gcp_conn_id: str = "google_cloud_default",
         replace: bool = False,
         gzip: bool = False,
-        google_impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        google_impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
 
@@ -121,16 +119,14 @@ class ADLSToGCSOperator(ADLSListOperator):
         self.dest_gcs = dest_gcs
         self.replace = replace
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.gzip = gzip
         self.google_impersonation_chain = google_impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         # use the super to list all files in an Azure Data Lake path
         files = super().execute(context)
         g_hook = GCSHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.google_impersonation_chain,
         )
 
@@ -146,7 +142,7 @@ class ADLSToGCSOperator(ADLSListOperator):
             hook = AzureDataLakeHook(azure_data_lake_conn_id=self.azure_data_lake_conn_id)
 
             for obj in files:
-                with NamedTemporaryFile(mode='wb', delete=True) as f:
+                with NamedTemporaryFile(mode="wb", delete=True) as f:
                     hook.download_file(local_path=f.name, remote_path=obj)
                     f.flush()
                     dest_gcs_bucket, dest_gcs_prefix = _parse_gcs_url(self.dest_gcs)

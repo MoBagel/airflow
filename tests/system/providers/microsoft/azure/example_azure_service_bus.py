@@ -14,22 +14,31 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
 
+import pytest
+
 from airflow import DAG
 from airflow.models.baseoperator import chain
-from airflow.providers.microsoft.azure.operators.asb import (
-    ASBReceiveSubscriptionMessageOperator,
-    AzureServiceBusCreateQueueOperator,
-    AzureServiceBusDeleteQueueOperator,
-    AzureServiceBusReceiveMessageOperator,
-    AzureServiceBusSendMessageOperator,
-    AzureServiceBusSubscriptionCreateOperator,
-    AzureServiceBusSubscriptionDeleteOperator,
-    AzureServiceBusUpdateSubscriptionOperator,
-)
+
+try:
+    from airflow.providers.microsoft.azure.operators.asb import (
+        ASBReceiveSubscriptionMessageOperator,
+        AzureServiceBusCreateQueueOperator,
+        AzureServiceBusDeleteQueueOperator,
+        AzureServiceBusReceiveMessageOperator,
+        AzureServiceBusSendMessageOperator,
+        AzureServiceBusSubscriptionCreateOperator,
+        AzureServiceBusSubscriptionDeleteOperator,
+        AzureServiceBusTopicCreateOperator,
+        AzureServiceBusTopicDeleteOperator,
+        AzureServiceBusUpdateSubscriptionOperator,
+    )
+except ImportError:
+    pytest.skip("Azure Service Bus not available", allow_module_level=True)
 
 EXECUTION_TIMEOUT = int(os.getenv("EXECUTION_TIMEOUT", 6))
 
@@ -43,7 +52,7 @@ SUBSCRIPTION_NAME = "sb_mgmt_subscription"
 with DAG(
     dag_id="example_azure_service_bus",
     start_date=datetime(2021, 8, 13),
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     default_args={
         "execution_timeout": timedelta(hours=EXECUTION_TIMEOUT),
@@ -94,6 +103,12 @@ with DAG(
     )
     # [END howto_operator_receive_message_service_bus_queue]
 
+    # [START howto_operator_create_service_bus_topic]
+    create_service_bus_topic = AzureServiceBusTopicCreateOperator(
+        task_id="create_service_bus_topic", topic_name=TOPIC_NAME
+    )
+    # [END howto_operator_create_service_bus_topic]
+
     # [START howto_operator_create_service_bus_subscription]
     create_service_bus_subscription = AzureServiceBusSubscriptionCreateOperator(
         task_id="create_service_bus_subscription",
@@ -129,6 +144,13 @@ with DAG(
     )
     # [END howto_operator_delete_service_bus_subscription]
 
+    # [START howto_operator_delete_service_bus_topic]
+    delete_asb_topic = AzureServiceBusTopicDeleteOperator(
+        task_id="delete_asb_topic",
+        topic_name=TOPIC_NAME,
+    )
+    # [END howto_operator_delete_service_bus_topic]
+
     # [START howto_operator_delete_service_bus_queue]
     delete_service_bus_queue = AzureServiceBusDeleteQueueOperator(
         task_id="delete_service_bus_queue", queue_name=QUEUE_NAME, trigger_rule="all_done"
@@ -137,6 +159,7 @@ with DAG(
 
     chain(
         create_service_bus_queue,
+        create_service_bus_topic,
         create_service_bus_subscription,
         send_message_to_service_bus_queue,
         send_list_message_to_service_bus_queue,
@@ -145,6 +168,7 @@ with DAG(
         update_service_bus_subscription,
         receive_message_service_bus_subscription,
         delete_service_bus_subscription,
+        delete_asb_topic,
         delete_service_bus_queue,
     )
 

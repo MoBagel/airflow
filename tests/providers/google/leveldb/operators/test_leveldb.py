@@ -15,7 +15,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -32,23 +31,31 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import unittest
+from __future__ import annotations
+
 from unittest import mock
 
-from airflow.providers.google.leveldb.hooks.leveldb import LevelDBHook
-from airflow.providers.google.leveldb.operators.leveldb import LevelDBOperator
+import pytest
+
+from airflow.exceptions import AirflowOptionalProviderFeatureException
+
+try:
+    from airflow.providers.google.leveldb.hooks.leveldb import LevelDBHook
+    from airflow.providers.google.leveldb.operators.leveldb import LevelDBOperator
+except AirflowOptionalProviderFeatureException:
+    pytest.skip("LevelDB not available", allow_module_level=True)
 
 
-class TestLevelDBOperator(unittest.TestCase):
-    @mock.patch.dict('os.environ', AIRFLOW_CONN_LEVELDB_DEFAULT="test")
-    @mock.patch.object(LevelDBHook, 'run')
+class TestLevelDBOperator:
+    @mock.patch.dict("os.environ", AIRFLOW_CONN_LEVELDB_DEFAULT="test")
+    @mock.patch.object(LevelDBHook, "run")
     def test_execute(self, mock_run):
         operator = LevelDBOperator(
-            task_id='test_task',
-            leveldb_conn_id='leveldb_default',
-            command='put',
-            key=b'key',
-            value=b'value',
+            task_id="test_task",
+            leveldb_conn_id="leveldb_default",
+            command="put",
+            key=b"key",
+            value=b"value",
         )
-        operator.execute(context='TEST_CONTEXT_ID')
-        mock_run.assert_called_once_with(command='put', value=b'value', key=b'key', values=None, keys=None)
+        operator.execute(context="TEST_CONTEXT_ID")
+        mock_run.assert_called_once_with(command="put", value=b"value", key=b"key", values=None, keys=None)

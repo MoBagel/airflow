@@ -14,10 +14,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Custom logging formatter for Airflow"""
+"""Custom logging formatter for Airflow."""
+from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from airflow.configuration import conf
 from airflow.utils.helpers import parse_template_string, render_template_to_string
@@ -29,9 +30,9 @@ if TYPE_CHECKING:
 
 
 class TaskHandlerWithCustomFormatter(logging.StreamHandler):
-    """Custom implementation of StreamHandler, a class which writes logging records for Airflow"""
+    """Custom implementation of StreamHandler, a class which writes logging records for Airflow."""
 
-    prefix_jinja_template: Optional["Template"] = None
+    prefix_jinja_template: Template | None = None
 
     def set_context(self, ti) -> None:
         """
@@ -42,7 +43,7 @@ class TaskHandlerWithCustomFormatter(logging.StreamHandler):
         """
         if ti.raw or self.formatter is None:
             return
-        prefix = conf.get('logging', 'task_log_prefix_template')
+        prefix = conf.get("logging", "task_log_prefix_template")
 
         if prefix:
             _, self.prefix_jinja_template = parse_template_string(prefix)
@@ -53,7 +54,7 @@ class TaskHandlerWithCustomFormatter(logging.StreamHandler):
         self.setFormatter(formatter)
         self.setLevel(self.level)
 
-    def _render_prefix(self, ti: "TaskInstance") -> str:
+    def _render_prefix(self, ti: TaskInstance) -> str:
         if self.prefix_jinja_template:
             jinja_context = ti.get_template_context()
             return render_template_to_string(self.prefix_jinja_template, jinja_context)

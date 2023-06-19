@@ -15,71 +15,67 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-import unittest
-
+import pytest
 from flask_appbuilder import SQLA
-from parameterized import parameterized
 
 from airflow import settings
 from airflow.security import permissions
 from airflow.www import app as application
-from airflow.www.views import CustomUserDBModelView
 from tests.test_utils.api_connexion_utils import create_user, delete_role
 from tests.test_utils.www import check_content_in_response, check_content_not_in_response, client_with_login
 
+PERMISSIONS_TESTS_PARAMS = [
+    (
+        "/resetpassword/form?pk={user.id}",
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_PASSWORD),
+        "Reset Password Form",
+    ),
+    (
+        "/resetmypassword/form",
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_MY_PASSWORD),
+        "Reset Password Form",
+    ),
+    (
+        "/users/userinfo/",
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_MY_PROFILE),
+        "Your user information",
+    ),
+    ("/userinfoeditview/form", (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_MY_PROFILE), "Edit User"),
+    ("/users/add", (permissions.ACTION_CAN_CREATE, permissions.RESOURCE_USER), "Add User"),
+    ("/users/list/", (permissions.ACTION_CAN_READ, permissions.RESOURCE_USER), "List Users"),
+    ("/users/show/{user.id}", (permissions.ACTION_CAN_READ, permissions.RESOURCE_USER), "Show User"),
+    ("/users/edit/{user.id}", (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_USER), "Edit User"),
+]
 
-class TestSecurity(unittest.TestCase):
+
+class TestSecurity:
     @classmethod
-    def setUpClass(cls):
+    def setup_class(cls):
         settings.configure_orm()
         cls.session = settings.Session
-        cls.app = application.create_app(testing=True)
-        cls.appbuilder = cls.app.appbuilder
-        cls.app.config['WTF_CSRF_ENABLED'] = False
-        cls.security_manager = cls.appbuilder.sm
 
-        cls.delete_roles()
-
-    def setUp(self):
+    def setup_method(self):
+        # We cannot reuse the app in tests (on class level) as in Flask 2.2 this causes
+        # an exception because app context teardown is removed and if even single request is run via app
+        # it cannot be re-intialized again by passing it as constructor to SQLA
+        # This makes the tests slightly slower (but they work with Flask 2.1 and 2.2
+        self.app = application.create_app(testing=True)
+        self.appbuilder = self.app.appbuilder
+        self.app.config["WTF_CSRF_ENABLED"] = False
+        self.security_manager = self.appbuilder.sm
+        self.delete_roles()
         self.db = SQLA(self.app)
-        self.appbuilder.add_view(CustomUserDBModelView, "CustomUserDBModelView", category="ModelViews")
+
         self.client = self.app.test_client()  # type:ignore
 
-    @classmethod
-    def delete_roles(cls):
-        for role_name in ['role_edit_one_dag']:
-            delete_role(cls.app, role_name)
+    def delete_roles(self):
+        for role_name in ["role_edit_one_dag"]:
+            delete_role(self.app, role_name)
 
-    @parameterized.expand(
-        [
-            (
-                "/resetpassword/form?pk={user.id}",
-                (permissions.ACTION_CAN_READ, permissions.RESOURCE_PASSWORD),
-                'Reset Password Form',
-            ),
-            (
-                "/resetmypassword/form",
-                (permissions.ACTION_CAN_READ, permissions.RESOURCE_MY_PASSWORD),
-                'Reset Password Form',
-            ),
-            (
-                "/users/userinfo/",
-                (permissions.ACTION_CAN_READ, permissions.RESOURCE_MY_PROFILE),
-                'Your user information',
-            ),
-            (
-                "/userinfoeditview/form",
-                (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_MY_PROFILE),
-                'Edit User',
-            ),
-            ("/users/add", (permissions.ACTION_CAN_CREATE, permissions.RESOURCE_USER), 'Add User'),
-            ("/users/list/", (permissions.ACTION_CAN_READ, permissions.RESOURCE_USER), 'List Users'),
-            ("/users/show/{user.id}", (permissions.ACTION_CAN_READ, permissions.RESOURCE_USER), 'Show User'),
-            ("/users/edit/{user.id}", (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_USER), 'Edit User'),
-        ]
-    )
-    def test_user_model_view_with_access(self, url, permission, expected_text):
+    @pytest.mark.parametrize("url, _, expected_text", PERMISSIONS_TESTS_PARAMS)
+    def test_user_model_view_with_access(self, url, expected_text, _):
         user_without_access = create_user(
             self.app,
             username="no_access",
@@ -96,34 +92,7 @@ class TestSecurity(unittest.TestCase):
         response = client.get(url.replace("{user.id}", str(user_without_access.id)), follow_redirects=True)
         check_content_not_in_response(expected_text, response)
 
-    @parameterized.expand(
-        [
-            (
-                "/resetpassword/form?pk={user.id}",
-                (permissions.ACTION_CAN_READ, permissions.RESOURCE_PASSWORD),
-                'Reset Password Form',
-            ),
-            (
-                "/resetmypassword/form",
-                (permissions.ACTION_CAN_READ, permissions.RESOURCE_MY_PASSWORD),
-                'Reset Password Form',
-            ),
-            (
-                "/users/userinfo/",
-                (permissions.ACTION_CAN_READ, permissions.RESOURCE_MY_PROFILE),
-                'Your user information',
-            ),
-            (
-                "/userinfoeditview/form",
-                (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_MY_PROFILE),
-                'Edit User',
-            ),
-            ("/users/add", (permissions.ACTION_CAN_CREATE, permissions.RESOURCE_USER), 'Add User'),
-            ("/users/list/", (permissions.ACTION_CAN_READ, permissions.RESOURCE_USER), 'List Users'),
-            ("/users/show/{user.id}", (permissions.ACTION_CAN_READ, permissions.RESOURCE_USER), 'Show User'),
-            ("/users/edit/{user.id}", (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_USER), 'Edit User'),
-        ]
-    )
+    @pytest.mark.parametrize("url, permission, expected_text", PERMISSIONS_TESTS_PARAMS)
     def test_user_model_view_without_access(self, url, permission, expected_text):
 
         user_with_access = create_user(

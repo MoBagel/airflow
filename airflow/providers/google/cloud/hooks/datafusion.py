@@ -14,26 +14,33 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """This module contains Google DataFusion hook."""
+from __future__ import annotations
+
 import json
 import os
 from time import monotonic, sleep
-from typing import Any, Dict, List, Optional, Sequence, Union
-from urllib.parse import quote, urlencode
+from typing import Any, Dict, Sequence
+from urllib.parse import quote, urlencode, urljoin
 
 import google.auth
+from aiohttp import ClientSession
+from gcloud.aio.auth import AioSession, Token
 from google.api_core.retry import exponential_sleep_generator
 from googleapiclient.discovery import Resource, build
 
-from airflow.exceptions import AirflowException
-from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
+from airflow.exceptions import AirflowException, AirflowNotFoundException
+from airflow.providers.google.common.hooks.base_google import (
+    PROVIDE_PROJECT_ID,
+    GoogleBaseAsyncHook,
+    GoogleBaseHook,
+)
 
 Operation = Dict[str, Any]
 
 
 class PipelineStates:
-    """Data Fusion pipeline states"""
+    """Data Fusion pipeline states."""
 
     PENDING = "PENDING"
     STARTING = "STARTING"
@@ -53,23 +60,27 @@ SUCCESS_STATES = [PipelineStates.COMPLETED]
 class DataFusionHook(GoogleBaseHook):
     """Hook for Google DataFusion."""
 
-    _conn = None  # type: Optional[Resource]
+    _conn: Resource | None = None
 
     def __init__(
         self,
         api_version: str = "v1beta1",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
     ) -> None:
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
         super().__init__(
             gcp_conn_id=gcp_conn_id,
-            delegate_to=delegate_to,
             impersonation_chain=impersonation_chain,
         )
         self.api_version = api_version
 
-    def wait_for_operation(self, operation: Dict[str, Any]) -> Dict[str, Any]:
+    def wait_for_operation(self, operation: dict[str, Any]) -> dict[str, Any]:
         """Waits for long-lasting operation to complete."""
         for time_to_wait in exponential_sleep_generator(initial=10, maximum=120):
             sleep(time_to_wait)
@@ -88,8 +99,8 @@ class DataFusionHook(GoogleBaseHook):
         pipeline_id: str,
         instance_url: str,
         namespace: str = "default",
-        success_states: Optional[List[str]] = None,
-        failure_states: Optional[List[str]] = None,
+        success_states: list[str] | None = None,
+        failure_states: list[str] | None = None,
         timeout: int = 5 * 60,
     ) -> None:
         """
@@ -138,18 +149,30 @@ class DataFusionHook(GoogleBaseHook):
         return os.path.join(instance_url, "v3", "namespaces", quote(namespace), "apps")
 
     def _cdap_request(
-        self, url: str, method: str, body: Optional[Union[List, Dict]] = None
+        self, url: str, method: str, body: list | dict | None = None
     ) -> google.auth.transport.Response:
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         request = google.auth.transport.requests.Request()
 
-        credentials = self._get_credentials()
+        credentials = self.get_credentials()
         credentials.before_request(request=request, method=method, url=url, headers=headers)
 
         payload = json.dumps(body) if body else None
 
         response = request(method=method, url=url, headers=headers, body=payload)
         return response
+
+    @staticmethod
+    def _check_response_status_and_data(response, message: str) -> None:
+        if response.status == 404:
+            raise AirflowNotFoundException(message)
+        elif response.status != 200:
+            raise AirflowException(message)
+        if response.data is None:
+            raise AirflowException(
+                "Empty response received. Please, check for possible root "
+                "causes of this behavior either in DAG code or on Cloud DataFusion side"
+            )
 
     def get_conn(self) -> Resource:
         """Retrieves connection to DataFusion."""
@@ -206,7 +229,7 @@ class DataFusionHook(GoogleBaseHook):
     def create_instance(
         self,
         instance_name: str,
-        instance: Dict[str, Any],
+        instance: dict[str, Any],
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
     ) -> Operation:
@@ -234,7 +257,7 @@ class DataFusionHook(GoogleBaseHook):
         return operation
 
     @GoogleBaseHook.fallback_to_default_project_id
-    def get_instance(self, instance_name: str, location: str, project_id: str) -> Dict[str, Any]:
+    def get_instance(self, instance_name: str, location: str, project_id: str) -> dict[str, Any]:
         """
         Gets details of a single Data Fusion instance.
 
@@ -256,7 +279,7 @@ class DataFusionHook(GoogleBaseHook):
     def patch_instance(
         self,
         instance_name: str,
-        instance: Dict[str, Any],
+        instance: dict[str, Any],
         update_mask: str,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
@@ -293,7 +316,7 @@ class DataFusionHook(GoogleBaseHook):
     def create_pipeline(
         self,
         pipeline_name: str,
-        pipeline: Dict[str, Any],
+        pipeline: dict[str, Any],
         instance_url: str,
         namespace: str = "default",
     ) -> None:
@@ -310,16 +333,15 @@ class DataFusionHook(GoogleBaseHook):
         """
         url = os.path.join(self._base_url(instance_url, namespace), quote(pipeline_name))
         response = self._cdap_request(url=url, method="PUT", body=pipeline)
-        if response.status != 200:
-            raise AirflowException(
-                f"Creating a pipeline failed with code {response.status} while calling {url}"
-            )
+        self._check_response_status_and_data(
+            response, f"Creating a pipeline failed with code {response.status} while calling {url}"
+        )
 
     def delete_pipeline(
         self,
         pipeline_name: str,
         instance_url: str,
-        version_id: Optional[str] = None,
+        version_id: str | None = None,
         namespace: str = "default",
     ) -> None:
         """
@@ -337,14 +359,15 @@ class DataFusionHook(GoogleBaseHook):
             url = os.path.join(url, "versions", version_id)
 
         response = self._cdap_request(url=url, method="DELETE", body=None)
-        if response.status != 200:
-            raise AirflowException(f"Deleting a pipeline failed with code {response.status}")
+        self._check_response_status_and_data(
+            response, f"Deleting a pipeline failed with code {response.status}"
+        )
 
     def list_pipelines(
         self,
         instance_url: str,
-        artifact_name: Optional[str] = None,
-        artifact_version: Optional[str] = None,
+        artifact_name: str | None = None,
+        artifact_version: str | None = None,
         namespace: str = "default",
     ) -> dict:
         """
@@ -358,7 +381,7 @@ class DataFusionHook(GoogleBaseHook):
             can create a namespace.
         """
         url = self._base_url(instance_url, namespace)
-        query: Dict[str, str] = {}
+        query: dict[str, str] = {}
         if artifact_name:
             query = {"artifactName": artifact_name}
         if artifact_version:
@@ -367,8 +390,9 @@ class DataFusionHook(GoogleBaseHook):
             url = os.path.join(url, urlencode(query))
 
         response = self._cdap_request(url=url, method="GET", body=None)
-        if response.status != 200:
-            raise AirflowException(f"Listing pipelines failed with code {response.status}")
+        self._check_response_status_and_data(
+            response, f"Listing pipelines failed with code {response.status}"
+        )
         return json.loads(response.data)
 
     def get_pipeline_workflow(
@@ -387,8 +411,9 @@ class DataFusionHook(GoogleBaseHook):
             quote(pipeline_id),
         )
         response = self._cdap_request(url=url, method="GET")
-        if response.status != 200:
-            raise AirflowException(f"Retrieving a pipeline state failed with code {response.status}")
+        self._check_response_status_and_data(
+            response, f"Retrieving a pipeline state failed with code {response.status}"
+        )
         workflow = json.loads(response.data)
         return workflow
 
@@ -397,7 +422,7 @@ class DataFusionHook(GoogleBaseHook):
         pipeline_name: str,
         instance_url: str,
         namespace: str = "default",
-        runtime_args: Optional[Dict[str, Any]] = None,
+        runtime_args: dict[str, Any] | None = None,
     ) -> str:
         """
         Starts a Cloud Data Fusion pipeline. Works for both batch and stream pipelines.
@@ -405,7 +430,7 @@ class DataFusionHook(GoogleBaseHook):
         :param pipeline_name: Your pipeline name.
         :param instance_url: Endpoint on which the REST APIs is accessible for the instance.
         :param runtime_args: Optional runtime JSON args to be passed to the pipeline
-        :param namespace: f your pipeline belongs to a Basic edition instance, the namespace ID
+        :param namespace: if your pipeline belongs to a Basic edition instance, the namespace ID
             is always default. If your pipeline belongs to an Enterprise edition instance, you
             can create a namespace.
         """
@@ -429,9 +454,9 @@ class DataFusionHook(GoogleBaseHook):
             }
         ]
         response = self._cdap_request(url=url, method="POST", body=body)
-        if response.status != 200:
-            raise AirflowException(f"Starting a pipeline failed with code {response.status}")
-
+        self._check_response_status_and_data(
+            response, f"Starting a pipeline failed with code {response.status}"
+        )
         response_json = json.loads(response.data)
         return response_json[0]["runId"]
 
@@ -453,5 +478,99 @@ class DataFusionHook(GoogleBaseHook):
             "stop",
         )
         response = self._cdap_request(url=url, method="POST")
-        if response.status != 200:
-            raise AirflowException(f"Stopping a pipeline failed with code {response.status}")
+        self._check_response_status_and_data(
+            response, f"Stopping a pipeline failed with code {response.status}"
+        )
+
+
+class DataFusionAsyncHook(GoogleBaseAsyncHook):
+    """Class to get asynchronous hook for DataFusion."""
+
+    sync_hook_class = DataFusionHook
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    def __init__(self, **kwargs):
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
+        super().__init__(**kwargs)
+
+    @staticmethod
+    def _base_url(instance_url: str, namespace: str) -> str:
+        return urljoin(f"{instance_url}/", f"v3/namespaces/{quote(namespace)}/apps/")
+
+    async def _get_link(self, url: str, session):
+        async with Token(scopes=self.scopes) as token:
+            session_aio = AioSession(session)
+            headers = {
+                "Authorization": f"Bearer {await token.get()}",
+            }
+            try:
+                pipeline = await session_aio.get(url=url, headers=headers)
+            except AirflowException:
+                pass  # Because the pipeline may not be visible in system yet
+
+        return pipeline
+
+    async def get_pipeline(
+        self,
+        instance_url: str,
+        namespace: str,
+        pipeline_name: str,
+        pipeline_id: str,
+        session,
+    ):
+        base_url_link = self._base_url(instance_url, namespace)
+        url = urljoin(
+            base_url_link, f"{quote(pipeline_name)}/workflows/DataPipelineWorkflow/runs/{quote(pipeline_id)}"
+        )
+        return await self._get_link(url=url, session=session)
+
+    async def get_pipeline_status(
+        self,
+        pipeline_name: str,
+        instance_url: str,
+        pipeline_id: str,
+        namespace: str = "default",
+        success_states: list[str] | None = None,
+    ) -> str:
+        """
+        Gets a Cloud Data Fusion pipeline status asynchronously.
+
+        :param pipeline_name: Your pipeline name.
+        :param instance_url: Endpoint on which the REST APIs is accessible for the instance.
+        :param pipeline_id: Unique pipeline ID associated with specific pipeline
+        :param namespace: if your pipeline belongs to a Basic edition instance, the namespace ID
+            is always default. If your pipeline belongs to an Enterprise edition instance, you
+            can create a namespace.
+        :param success_states: If provided the operator will wait for pipeline to be in one of
+            the provided states.
+        """
+        success_states = success_states or SUCCESS_STATES
+        async with ClientSession() as session:
+            try:
+                pipeline = await self.get_pipeline(
+                    instance_url=instance_url,
+                    namespace=namespace,
+                    pipeline_name=pipeline_name,
+                    pipeline_id=pipeline_id,
+                    session=session,
+                )
+                self.log.info("Response pipeline: %s", pipeline)
+                pipeline = await pipeline.json(content_type=None)
+                current_pipeline_state = pipeline["status"]
+
+                if current_pipeline_state in success_states:
+                    pipeline_status = "success"
+                elif current_pipeline_state in FAILURE_STATES:
+                    pipeline_status = "failed"
+                else:
+                    pipeline_status = "pending"
+            except OSError:
+                pipeline_status = "pending"
+            except Exception as e:
+                self.log.info("Retrieving pipeline status finished with errors...")
+                pipeline_status = str(e)
+            return pipeline_status

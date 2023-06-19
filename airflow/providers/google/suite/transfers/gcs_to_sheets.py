@@ -14,10 +14,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 import csv
 from tempfile import NamedTemporaryFile
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Sequence
 
 from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
@@ -66,8 +67,7 @@ class GCSToGoogleSheetsOperator(BaseOperator):
         object_name: str,
         spreadsheet_range: str = "Sheet1",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -77,18 +77,15 @@ class GCSToGoogleSheetsOperator(BaseOperator):
         self.spreadsheet_range = spreadsheet_range
         self.bucket_name = bucket_name
         self.object_name = object_name
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
     def execute(self, context: Any) -> None:
         sheet_hook = GSheetsHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
         gcs_hook = GCSHook(
             gcp_conn_id=self.gcp_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
         with NamedTemporaryFile("w+") as temp_file:

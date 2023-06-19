@@ -15,9 +15,9 @@
     specific language governing permissions and limitations
     under the License.
 
-=========================================
-Amazon Amazon Elastic Compute Cloud (EC2)
-=========================================
+==================================
+Amazon Elastic Compute Cloud (EC2)
+==================================
 
 `Amazon Elastic Compute Cloud (Amazon EC2) <https://aws.amazon.com/ec2/>`__ is a web service that provides resizable
 computing capacity—literally, servers in Amazon's data centers—that you use to build and host your software systems.
@@ -25,7 +25,7 @@ computing capacity—literally, servers in Amazon's data centers—that you use 
 Prerequisite Tasks
 ------------------
 
-.. include:: _partials/prerequisite_tasks.rst
+.. include:: ../_partials/prerequisite_tasks.rst
 
 Operators
 ---------
@@ -38,7 +38,7 @@ Start an Amazon EC2 instance
 To start an Amazon EC2 instance you can use
 :class:`~airflow.providers.amazon.aws.operators.ec2.EC2StartInstanceOperator`.
 
-.. exampleinclude:: /../../airflow/providers/amazon/aws/example_dags/example_ec2.py
+.. exampleinclude:: /../../tests/system/providers/amazon/aws/example_ec2.py
     :language: python
     :dedent: 4
     :start-after: [START howto_operator_ec2_start_instance]
@@ -52,11 +52,39 @@ Stop an Amazon EC2 instance
 To stop an Amazon EC2 instance you can use
 :class:`~airflow.providers.amazon.aws.operators.ec2.EC2StopInstanceOperator`.
 
-.. exampleinclude:: /../../airflow/providers/amazon/aws/example_dags/example_ec2.py
+.. exampleinclude:: /../../tests/system/providers/amazon/aws/example_ec2.py
     :language: python
     :dedent: 4
     :start-after: [START howto_operator_ec2_stop_instance]
     :end-before: [END howto_operator_ec2_stop_instance]
+
+.. _howto/operator:EC2CreateInstanceOperator:
+
+Create and start an Amazon EC2 instance
+=======================================
+
+To create and start an Amazon EC2 instance you can use
+:class:`~airflow.providers.amazon.aws.operators.ec2.EC2CreateInstanceOperator`.
+
+.. exampleinclude:: /../../tests/system/providers/amazon/aws/example_ec2.py
+    :language: python
+    :dedent: 4
+    :start-after: [START howto_operator_ec2_create_instance]
+    :end-before: [END howto_operator_ec2_create_instance]
+
+.. _howto/operator:EC2TerminateInstanceOperator:
+
+Terminate an Amazon EC2 instance
+================================
+
+To terminate an Amazon EC2 instance you can use
+:class:`~airflow.providers.amazon.aws.operators.ec2.EC2TerminateInstanceOperator`.
+
+.. exampleinclude:: /../../tests/system/providers/amazon/aws/example_ec2.py
+    :language: python
+    :dedent: 4
+    :start-after: [START howto_operator_ec2_terminate_instance]
+    :end-before: [END howto_operator_ec2_terminate_instance]
 
 Sensors
 -------
@@ -69,7 +97,7 @@ Wait on an Amazon EC2 instance state
 To check the state of an Amazon EC2 instance and wait until it reaches the target state you can use
 :class:`~airflow.providers.amazon.aws.sensors.ec2.EC2InstanceStateSensor`.
 
-.. exampleinclude:: /../../airflow/providers/amazon/aws/example_dags/example_ec2.py
+.. exampleinclude:: /../../tests/system/providers/amazon/aws/example_ec2.py
     :language: python
     :dedent: 4
     :start-after: [START howto_sensor_ec2_instance_state]

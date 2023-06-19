@@ -16,13 +16,17 @@
 # specific language governing permissions and limitations
 # under the License.
 """Class responsible for colouring logs based on log level."""
+from __future__ import annotations
+
 import re
 import sys
 from logging import LogRecord
-from typing import Any, Union
+from typing import Any
 
 from colorlog import TTYColoredFormatter
 from colorlog.escape_codes import esc, escape_codes
+
+from airflow.utils.log.timezone_aware import TimezoneAware
 
 DEFAULT_COLORS = {
     "DEBUG": "green",
@@ -32,11 +36,11 @@ DEFAULT_COLORS = {
     "CRITICAL": "red",
 }
 
-BOLD_ON = escape_codes['bold']
-BOLD_OFF = esc('22')
+BOLD_ON = escape_codes["bold"]
+BOLD_OFF = esc("22")
 
 
-class CustomTTYColoredFormatter(TTYColoredFormatter):
+class CustomTTYColoredFormatter(TTYColoredFormatter, TimezoneAware):
     """
     Custom log formatter which extends `colored.TTYColoredFormatter`
     by adding attributes to message arguments and coloring error
@@ -49,7 +53,7 @@ class CustomTTYColoredFormatter(TTYColoredFormatter):
         super().__init__(*args, **kwargs)
 
     @staticmethod
-    def _color_arg(arg: Any) -> Union[str, float, int]:
+    def _color_arg(arg: Any) -> str | float | int:
         if isinstance(arg, (int, float)):
             # In case of %d or %f formatting
             return arg
@@ -83,7 +87,7 @@ class CustomTTYColoredFormatter(TTYColoredFormatter):
 
             if record.exc_text:
                 record.exc_text = (
-                    self.color(self.log_colors, record.levelname) + record.exc_text + escape_codes['reset']
+                    self.color(self.log_colors, record.levelname) + record.exc_text + escape_codes["reset"]
                 )
 
         return record

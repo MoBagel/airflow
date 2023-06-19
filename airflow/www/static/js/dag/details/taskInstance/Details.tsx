@@ -17,147 +17,194 @@
  * under the License.
  */
 
-import React from 'react';
-import {
-  Text,
-  Box,
-  Flex,
-} from '@chakra-ui/react';
+import React from "react";
+import { Text, Flex, Table, Tbody, Tr, Td, Divider } from "@chakra-ui/react";
+import { snakeCase } from "lodash";
 
-import { finalStatesMap } from 'src/utils';
-import { getDuration, formatDuration } from 'src/datetime_utils';
-import { SimpleStatus } from 'src/dag/StatusBox';
-import Time from 'src/components/Time';
-import { ClipboardText } from 'src/components/Clipboard';
-import type { Task, TaskInstance, TaskState } from 'src/types';
+import { getGroupAndMapSummary } from "src/utils";
+import { getDuration, formatDuration } from "src/datetime_utils";
+import { SimpleStatus } from "src/dag/StatusBox";
+import Time from "src/components/Time";
+import { ClipboardText } from "src/components/Clipboard";
+import type { Task, TaskInstance, TaskState } from "src/types";
+import useTaskInstance from "src/api/useTaskInstance";
+import DatasetUpdateEvents from "./DatasetUpdateEvents";
 
 interface Props {
   instance: TaskInstance;
   group: Task;
-  operator: string;
+  dagId: string;
 }
 
-const Details = ({ instance, group, operator }: Props) => {
+const Details = ({ instance, group, dagId }: Props) => {
   const isGroup = !!group.children;
   const summary: React.ReactNode[] = [];
 
-  const {
+  const { taskId, runId, startDate, endDate, state, mappedStates, mapIndex } =
+    instance;
+
+  const { isMapped, tooltip, operator, hasOutletDatasets, triggerRule } = group;
+
+  const { data: apiTI } = useTaskInstance({
+    dagId,
+    dagRunId: runId,
     taskId,
+    mapIndex,
+    enabled: !isGroup && !isMapped,
+  });
+
+  const { totalTasks, childTaskMap } = getGroupAndMapSummary({
+    group,
     runId,
-    startDate,
-    endDate,
-    state,
     mappedStates,
-  } = instance;
+  });
 
-  const {
-    isMapped,
-    tooltip,
-  } = group;
-
-  const numMap = finalStatesMap();
-  let numMapped = 0;
-  if (isGroup) {
-    group.children?.forEach((child) => {
-      const taskInstance = child.instances.find((ti) => ti.runId === runId);
-      if (taskInstance) {
-        const stateKey = taskInstance.state == null ? 'no_status' : taskInstance.state;
-        if (numMap.has(stateKey)) numMap.set(stateKey, (numMap.get(stateKey) || 0) + 1);
-      }
-    });
-  } else if (isMapped && mappedStates) {
-    Object.keys(mappedStates).forEach((stateKey) => {
-      const num = mappedStates[stateKey];
-      numMapped += num;
-      numMap.set(stateKey || 'no_status', num);
-    });
-  }
-
-  numMap.forEach((key, val) => {
+  childTaskMap.forEach((key, val) => {
+    const childState = snakeCase(val);
     if (key > 0) {
       summary.push(
-        // eslint-disable-next-line react/no-array-index-key
-        <Flex key={val} ml="10px" alignItems="center">
-          <SimpleStatus state={val as TaskState} mx={2} />
-          {val}
-          {': '}
-          {key}
-        </Flex>,
+        <Tr key={childState}>
+          <Td />
+          <Td>
+            <Flex alignItems="center">
+              <SimpleStatus state={childState as TaskState} mx={2} />
+              {childState}
+              {": "}
+              {key}
+            </Flex>
+          </Td>
+        </Tr>
       );
     }
   });
 
-  const taskIdTitle = isGroup ? 'Task Group Id: ' : 'Task Id: ';
-  const isStateFinal = state && ['success', 'failed', 'upstream_failed', 'skipped'].includes(state);
-  const isOverall = (isMapped || isGroup) && 'Overall ';
-
+  const taskIdTitle = isGroup ? "Task Group ID" : "Task ID";
+  const isStateFinal =
+    state &&
+    ["success", "failed", "upstream_failed", "skipped"].includes(state);
+  const isOverall = (isMapped || isGroup) && "Overall ";
   return (
     <Flex flexWrap="wrap" justifyContent="space-between">
-      <Box>
-        {tooltip && (
-          <>
-            <Text>{tooltip}</Text>
-            <br />
-          </>
-        )}
-        {mappedStates && numMapped > 0 && (
-        <Text>
-          {numMapped}
-          {' '}
-          {numMapped === 1 ? 'Task ' : 'Tasks '}
-          Mapped
-        </Text>
-        )}
-        <Flex alignItems="center">
-          <Text as="strong">
-            {isOverall}
-            Status:
-          </Text>
-          <SimpleStatus state={state} mx={2} />
-          {state || 'no status'}
-        </Flex>
-        {summary.length > 0 && (
-          summary
-        )}
-        <br />
-        <Text>
-          {taskIdTitle}
-          <ClipboardText value={taskId} />
-        </Text>
-        <Text whiteSpace="nowrap">
-          Run Id:
-          {' '}
-          <ClipboardText value={runId} />
-        </Text>
-        {operator && (
-          <Text>
-            Operator:
-            {' '}
-            {operator}
-          </Text>
-        )}
-        <br />
-        <Text>
-          {isOverall}
-          Duration:
-          {' '}
-          {formatDuration(getDuration(startDate, endDate))}
-        </Text>
-        {startDate && (
-        <Text>
-          Started:
-          {' '}
-          <Time dateTime={startDate} />
-        </Text>
-        )}
-        {endDate && isStateFinal && (
-        <Text>
-          Ended:
-          {' '}
-          <Time dateTime={endDate} />
-        </Text>
-        )}
-      </Box>
+      {state === "deferred" && (
+        <>
+          <Text as="strong">Triggerer info</Text>
+          <Divider my={2} />
+          <Table variant="striped" mb={3}>
+            <Tbody>
+              <Tr>
+                <Td>Trigger class</Td>
+                <Td>{`${apiTI?.trigger?.classpath}`}</Td>
+              </Tr>
+              <Tr>
+                <Td>Trigger creation time</Td>
+                <Td>{`${apiTI?.trigger?.createdDate}`}</Td>
+              </Tr>
+              <Tr>
+                <Td>Assigned triggerer</Td>
+                <Td>{`${apiTI?.triggererJob?.hostname}`}</Td>
+              </Tr>
+              <Tr>
+                <Td>Latest triggerer heartbeat</Td>
+                <Td>{`${apiTI?.triggererJob?.latestHeartbeat}`}</Td>
+              </Tr>
+            </Tbody>
+          </Table>
+        </>
+      )}
+
+      <Text as="strong">Task Instance Details</Text>
+      <Divider my={2} />
+      <Table variant="striped">
+        <Tbody>
+          {tooltip && (
+            <Tr>
+              <Td colSpan={2}>{tooltip}</Td>
+            </Tr>
+          )}
+          <Tr>
+            <Td>
+              {isOverall}
+              Status
+            </Td>
+            <Td>
+              <Flex>
+                <SimpleStatus state={state} mx={2} />
+                {state || "no status"}
+              </Flex>
+            </Td>
+          </Tr>
+          {mappedStates && totalTasks > 0 && (
+            <Tr>
+              <Td colSpan={2}>
+                {totalTasks} {isGroup ? "Task Group" : "Task"}
+                {totalTasks === 1 ? " " : "s "}
+                Mapped
+              </Td>
+            </Tr>
+          )}
+          {summary.length > 0 && summary}
+          <Tr>
+            <Td>{taskIdTitle}</Td>
+            <Td>
+              <ClipboardText value={taskId} />
+            </Td>
+          </Tr>
+          <Tr>
+            <Td>Run ID</Td>
+            <Td>
+              <Text whiteSpace="nowrap">
+                <ClipboardText value={runId} />
+              </Text>
+            </Td>
+          </Tr>
+          {mapIndex !== undefined && (
+            <Tr>
+              <Td>Map Index</Td>
+              <Td>{mapIndex}</Td>
+            </Tr>
+          )}
+          {operator && (
+            <Tr>
+              <Td>Operator</Td>
+              <Td>{operator}</Td>
+            </Tr>
+          )}
+          {triggerRule && (
+            <Tr>
+              <Td>Trigger Rule</Td>
+              <Td>{triggerRule}</Td>
+            </Tr>
+          )}
+          {startDate && (
+            <Tr>
+              <Td>
+                {isOverall}
+                Duration
+              </Td>
+              <Td>{formatDuration(getDuration(startDate, endDate))}</Td>
+            </Tr>
+          )}
+          {startDate && (
+            <Tr>
+              <Td>Started</Td>
+              <Td>
+                <Time dateTime={startDate} />
+              </Td>
+            </Tr>
+          )}
+          {endDate && isStateFinal && (
+            <Tr>
+              <Td>Ended</Td>
+              <Td>
+                <Time dateTime={endDate} />
+              </Td>
+            </Tr>
+          )}
+        </Tbody>
+      </Table>
+      {hasOutletDatasets && (
+        <DatasetUpdateEvents taskId={taskId} runId={runId} />
+      )}
     </Flex>
   );
 };

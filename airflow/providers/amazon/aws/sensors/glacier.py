@@ -15,7 +15,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 from enum import Enum
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Sequence
 
 from airflow.exceptions import AirflowException
@@ -27,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class JobStatus(Enum):
-    """Glacier jobs description"""
+    """Glacier jobs description."""
 
     IN_PROGRESS = "InProgress"
     SUCCEEDED = "Succeeded"
@@ -65,7 +68,7 @@ class GlacierJobOperationSensor(BaseSensorOperator):
     def __init__(
         self,
         *,
-        aws_conn_id: str = 'aws_default',
+        aws_conn_id: str = "aws_default",
         vault_name: str,
         job_id: str,
         poke_interval: int = 60 * 20,
@@ -79,9 +82,12 @@ class GlacierJobOperationSensor(BaseSensorOperator):
         self.poke_interval = poke_interval
         self.mode = mode
 
-    def poke(self, context: 'Context') -> bool:
-        hook = GlacierHook(aws_conn_id=self.aws_conn_id)
-        response = hook.describe_job(vault_name=self.vault_name, job_id=self.job_id)
+    @cached_property
+    def hook(self):
+        return GlacierHook(aws_conn_id=self.aws_conn_id)
+
+    def poke(self, context: Context) -> bool:
+        response = self.hook.describe_job(vault_name=self.vault_name, job_id=self.job_id)
 
         if response["StatusCode"] == JobStatus.SUCCEEDED.value:
             self.log.info("Job status: %s, code status: %s", response["Action"], response["StatusCode"])

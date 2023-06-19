@@ -15,14 +15,18 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 # Note: Any AirflowException raised is expected to cause the TaskInstance
 #       to be marked in an ERROR state
-"""Exceptions used by Airflow"""
+"""Exceptions used by Airflow."""
+from __future__ import annotations
+
 import datetime
 import warnings
 from http import HTTPStatus
-from typing import Any, Dict, List, NamedTuple, Optional, Sized
+from typing import TYPE_CHECKING, Any, NamedTuple, Sized
+
+if TYPE_CHECKING:
+    from airflow.models import DAG, DagRun
 
 
 class AirflowException(Exception):
@@ -67,14 +71,6 @@ class AirflowRescheduleException(AirflowException):
         self.reschedule_date = reschedule_date
 
 
-class AirflowSmartSensorException(AirflowException):
-    """
-    Raise after the task register itself in the smart sensor service.
-
-    It should exit without failing a task.
-    """
-
-
 class InvalidStatsNameException(AirflowException):
     """Raise when name of the stats is invalid."""
 
@@ -88,7 +84,7 @@ class AirflowWebServerTimeout(AirflowException):
 
 
 class AirflowSkipException(AirflowException):
-    """Raise when the task should be skipped"""
+    """Raise when the task should be skipped."""
 
 
 class AirflowFailException(AirflowException):
@@ -97,6 +93,19 @@ class AirflowFailException(AirflowException):
 
 class AirflowOptionalProviderFeatureException(AirflowException):
     """Raise by providers when imports are missing for optional provider features."""
+
+
+class XComNotFound(AirflowException):
+    """Raise when an XCom reference is being resolved against a non-existent XCom."""
+
+    def __init__(self, dag_id: str, task_id: str, key: str) -> None:
+        super().__init__()
+        self.dag_id = dag_id
+        self.task_id = task_id
+        self.key = key
+
+    def __str__(self) -> str:
+        return f'XComArg result from {self.task_id} at {self.dag_id} with key="{self.key}" is not found!'
 
 
 class UnmappableOperator(AirflowException):
@@ -121,18 +130,6 @@ class UnmappableXComTypePushed(AirflowException):
         for arg in self.args[1:]:
             typename = f"{typename}[{type(arg).__qualname__}]"
         return f"unmappable return type {typename!r}"
-
-
-class UnmappableXComValuePushed(AirflowException):
-    """Raise when an invalid value is pushed as a mapped downstream's dependency."""
-
-    def __init__(self, value: Any, reason: str) -> None:
-        super().__init__(value, reason)
-        self.value = value
-        self.reason = reason
-
-    def __str__(self) -> str:
-        return f"unmappable return value {self.value!r} ({self.reason})"
 
 
 class UnmappableXComLengthPushed(AirflowException):
@@ -172,6 +169,10 @@ class AirflowClusterPolicyViolation(AirflowException):
     """Raise when there is a violation of a Cluster Policy in DAG definition."""
 
 
+class AirflowClusterPolicyError(AirflowException):
+    """Raise when there is an error except AirflowClusterPolicyViolation in Cluster Policy."""
+
+
 class AirflowTimetableInvalid(AirflowException):
     """Raise when a DAG has an invalid timetable."""
 
@@ -191,6 +192,12 @@ class DagRunNotFound(AirflowNotFoundException):
 class DagRunAlreadyExists(AirflowBadRequest):
     """Raise when creating a DAG run for DAG which already has DAG run entry."""
 
+    def __init__(self, dag_run: DagRun, execution_date: datetime.datetime, run_id: str) -> None:
+        super().__init__(
+            f"A DAG Run already exists for DAG {dag_run.dag_id} at {execution_date} with run id {run_id}"
+        )
+        self.dag_run = dag_run
+
 
 class DagFileExists(AirflowBadRequest):
     """Raise when a DAG ID is still in DagBag i.e., DAG file is in DAG folder."""
@@ -200,6 +207,22 @@ class DagFileExists(AirflowBadRequest):
         warnings.warn("DagFileExists is deprecated and will be removed.", DeprecationWarning, stacklevel=2)
 
 
+class DagInvalidTriggerRule(AirflowException):
+    """Raise when a dag has 'fail_stop' enabled yet has a non-default trigger rule."""
+
+    @classmethod
+    def check(cls, dag: DAG | None, trigger_rule: str):
+        from airflow.models.abstractoperator import DEFAULT_TRIGGER_RULE
+
+        if dag is not None and dag.fail_stop and trigger_rule != DEFAULT_TRIGGER_RULE:
+            raise cls()
+
+    def __str__(self) -> str:
+        from airflow.models.abstractoperator import DEFAULT_TRIGGER_RULE
+
+        return f"A 'fail-stop' dag can only have {DEFAULT_TRIGGER_RULE} trigger rule"
+
+
 class DuplicateTaskIdFound(AirflowException):
     """Raise when a Task with duplicate task_id is defined in the same DAG."""
 
@@ -207,7 +230,7 @@ class DuplicateTaskIdFound(AirflowException):
 class TaskAlreadyInTaskGroup(AirflowException):
     """Raise when a Task cannot be added to a TaskGroup since it already belongs to another TaskGroup."""
 
-    def __init__(self, task_id: str, existing_group_id: Optional[str], new_group_id: str) -> None:
+    def __init__(self, task_id: str, existing_group_id: str | None, new_group_id: str) -> None:
         super().__init__(task_id, new_group_id)
         self.task_id = task_id
         self.existing_group_id = existing_group_id
@@ -222,11 +245,11 @@ class TaskAlreadyInTaskGroup(AirflowException):
 
 
 class SerializationError(AirflowException):
-    """A problem occurred when trying to serialize a DAG."""
+    """A problem occurred when trying to serialize something."""
 
 
 class ParamValidationError(AirflowException):
-    """Raise when DAG params is invalid"""
+    """Raise when DAG params is invalid."""
 
 
 class TaskNotFound(AirflowNotFoundException):
@@ -269,7 +292,7 @@ class BackfillUnfinished(AirflowException):
 class FileSyntaxError(NamedTuple):
     """Information about a single error in a file."""
 
-    line_no: Optional[int]
+    line_no: int | None
     message: str
 
     def __str__(self):
@@ -285,7 +308,7 @@ class AirflowFileParseException(AirflowException):
     :param parse_errors: File syntax errors
     """
 
-    def __init__(self, msg: str, file_path: str, parse_errors: List[FileSyntaxError]) -> None:
+    def __init__(self, msg: str, file_path: str, parse_errors: list[FileSyntaxError]) -> None:
         super().__init__(msg)
         self.msg = msg
         self.file_path = file_path
@@ -314,6 +337,8 @@ class ConnectionNotUnique(AirflowException):
 
 class TaskDeferred(BaseException):
     """
+    Signal an operator moving to deferred state.
+
     Special exception raised to signal that the operator it was raised from
     wishes to defer until a trigger fires.
     """
@@ -323,8 +348,8 @@ class TaskDeferred(BaseException):
         *,
         trigger,
         method_name: str,
-        kwargs: Optional[Dict[str, Any]] = None,
-        timeout: Optional[datetime.timedelta] = None,
+        kwargs: dict[str, Any] | None = None,
+        timeout: datetime.timedelta | None = None,
     ):
         super().__init__()
         self.trigger = trigger
@@ -343,5 +368,33 @@ class TaskDeferralError(AirflowException):
     """Raised when a task failed during deferral for some reason."""
 
 
+class PodMutationHookException(AirflowException):
+    """Raised when exception happens during Pod Mutation Hook execution."""
+
+
 class PodReconciliationError(AirflowException):
     """Raised when an error is encountered while trying to merge pod configs."""
+
+
+class RemovedInAirflow3Warning(DeprecationWarning):
+    """Issued for usage of deprecated features that will be removed in Airflow3."""
+
+    deprecated_since: str | None = None
+    "Indicates the airflow version that started raising this deprecation warning"
+
+
+class AirflowProviderDeprecationWarning(DeprecationWarning):
+    """Issued for usage of deprecated features of Airflow provider."""
+
+    deprecated_provider_since: str | None = None
+    "Indicates the provider version that started raising this deprecation warning"
+
+
+class DeserializingResultError(ValueError):
+    """Raised when an error is encountered while a pickling library deserializes a pickle file."""
+
+    def __str__(self):
+        return (
+            "Error deserializing result. Note that result deserialization "
+            "is not supported across major Python versions. Cause: " + str(self.__cause__)
+        )

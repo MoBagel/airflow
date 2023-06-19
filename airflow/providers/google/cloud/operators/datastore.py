@@ -15,27 +15,28 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 """This module contains Google Datastore operators."""
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Sequence
 
 from airflow.exceptions import AirflowException
-from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.datastore import DatastoreHook
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from airflow.providers.google.cloud.links.datastore import (
     CloudDatastoreEntitiesLink,
     CloudDatastoreImportExportLink,
 )
+from airflow.providers.google.cloud.operators.cloud_base import GoogleCloudBaseOperator
 from airflow.providers.google.common.links.storage import StorageLink
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class CloudDatastoreExportEntitiesOperator(BaseOperator):
+class CloudDatastoreExportEntitiesOperator(GoogleCloudBaseOperator):
     """
-    Export entities from Google Cloud Datastore to Cloud Storage
+    Export entities from Google Cloud Datastore to Cloud Storage.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -44,15 +45,12 @@ class CloudDatastoreExportEntitiesOperator(BaseOperator):
     .. seealso::
         https://cloud.google.com/datastore/docs/export-import-entities
 
-    :param bucket: name of the cloud storage bucket to backup data
+    :param bucket: name of the cloud storage bucket to back up data
     :param namespace: optional namespace path in the specified Cloud Storage bucket
-        to backup data. If this namespace does not exist in GCS, it will be created.
+        to back up data. If this namespace does not exist in GCS, it will be created.
     :param datastore_conn_id: the name of the Datastore connection id to use
     :param cloud_storage_conn_id: the name of the cloud storage connection id to
         force-write backup
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param entity_filter: description of what data from the project is included in the
         export, refer to
         https://cloud.google.com/datastore/docs/reference/rest/Shared.Types/EntityFilter
@@ -72,11 +70,11 @@ class CloudDatastoreExportEntitiesOperator(BaseOperator):
     """
 
     template_fields: Sequence[str] = (
-        'bucket',
-        'namespace',
-        'entity_filter',
-        'labels',
-        'impersonation_chain',
+        "bucket",
+        "namespace",
+        "entity_filter",
+        "labels",
+        "impersonation_chain",
     )
     operator_extra_links = (StorageLink(),)
 
@@ -84,22 +82,20 @@ class CloudDatastoreExportEntitiesOperator(BaseOperator):
         self,
         *,
         bucket: str,
-        namespace: Optional[str] = None,
-        datastore_conn_id: str = 'google_cloud_default',
-        cloud_storage_conn_id: str = 'google_cloud_default',
-        delegate_to: Optional[str] = None,
-        entity_filter: Optional[dict] = None,
-        labels: Optional[dict] = None,
+        namespace: str | None = None,
+        datastore_conn_id: str = "google_cloud_default",
+        cloud_storage_conn_id: str = "google_cloud_default",
+        entity_filter: dict | None = None,
+        labels: dict | None = None,
         polling_interval_in_seconds: int = 10,
         overwrite_existing: bool = False,
-        project_id: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        project_id: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.datastore_conn_id = datastore_conn_id
         self.cloud_storage_conn_id = cloud_storage_conn_id
-        self.delegate_to = delegate_to
         self.bucket = bucket
         self.namespace = namespace
         self.entity_filter = entity_filter
@@ -109,8 +105,8 @@ class CloudDatastoreExportEntitiesOperator(BaseOperator):
         self.project_id = project_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> dict:
-        self.log.info('Exporting data to Cloud Storage bucket %s', self.bucket)
+    def execute(self, context: Context) -> dict:
+        self.log.info("Exporting data to Cloud Storage bucket %s", self.bucket)
 
         if self.overwrite_existing and self.namespace:
             gcs_hook = GCSHook(self.cloud_storage_conn_id, impersonation_chain=self.impersonation_chain)
@@ -120,7 +116,6 @@ class CloudDatastoreExportEntitiesOperator(BaseOperator):
 
         ds_hook = DatastoreHook(
             gcp_conn_id=self.datastore_conn_id,
-            delegate_to=self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
         result = ds_hook.export_to_storage_bucket(
@@ -130,12 +125,12 @@ class CloudDatastoreExportEntitiesOperator(BaseOperator):
             labels=self.labels,
             project_id=self.project_id,
         )
-        operation_name = result['name']
+        operation_name = result["name"]
         result = ds_hook.poll_operation_until_done(operation_name, self.polling_interval_in_seconds)
 
-        state = result['metadata']['common']['state']
-        if state != 'SUCCESSFUL':
-            raise AirflowException(f'Operation failed: result={result}')
+        state = result["metadata"]["common"]["state"]
+        if state != "SUCCESSFUL":
+            raise AirflowException(f"Operation failed: result={result}")
         StorageLink.persist(
             context=context,
             task_instance=self,
@@ -145,9 +140,9 @@ class CloudDatastoreExportEntitiesOperator(BaseOperator):
         return result
 
 
-class CloudDatastoreImportEntitiesOperator(BaseOperator):
+class CloudDatastoreImportEntitiesOperator(GoogleCloudBaseOperator):
     """
-    Import entities from Cloud Storage to Google Cloud Datastore
+    Import entities from Cloud Storage to Google Cloud Datastore.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -166,9 +161,6 @@ class CloudDatastoreImportEntitiesOperator(BaseOperator):
         https://cloud.google.com/datastore/docs/reference/rest/Shared.Types/EntityFilter
     :param labels: client-assigned labels for cloud storage
     :param datastore_conn_id: the name of the connection id to use
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param polling_interval_in_seconds: number of seconds to wait before polling for
         execution status again
     :param impersonation_chain: Optional service account to impersonate using short-term
@@ -182,12 +174,12 @@ class CloudDatastoreImportEntitiesOperator(BaseOperator):
     """
 
     template_fields: Sequence[str] = (
-        'bucket',
-        'file',
-        'namespace',
-        'entity_filter',
-        'labels',
-        'impersonation_chain',
+        "bucket",
+        "file",
+        "namespace",
+        "entity_filter",
+        "labels",
+        "impersonation_chain",
     )
     operator_extra_links = (CloudDatastoreImportExportLink(),)
 
@@ -196,19 +188,17 @@ class CloudDatastoreImportEntitiesOperator(BaseOperator):
         *,
         bucket: str,
         file: str,
-        namespace: Optional[str] = None,
-        entity_filter: Optional[dict] = None,
-        labels: Optional[dict] = None,
-        datastore_conn_id: str = 'google_cloud_default',
-        delegate_to: Optional[str] = None,
+        namespace: str | None = None,
+        entity_filter: dict | None = None,
+        labels: dict | None = None,
+        datastore_conn_id: str = "google_cloud_default",
         polling_interval_in_seconds: float = 10,
-        project_id: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        project_id: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.datastore_conn_id = datastore_conn_id
-        self.delegate_to = delegate_to
         self.bucket = bucket
         self.file = file
         self.namespace = namespace
@@ -218,11 +208,10 @@ class CloudDatastoreImportEntitiesOperator(BaseOperator):
         self.project_id = project_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
-        self.log.info('Importing data from Cloud Storage bucket %s', self.bucket)
+    def execute(self, context: Context):
+        self.log.info("Importing data from Cloud Storage bucket %s", self.bucket)
         ds_hook = DatastoreHook(
             self.datastore_conn_id,
-            self.delegate_to,
             impersonation_chain=self.impersonation_chain,
         )
         result = ds_hook.import_from_storage_bucket(
@@ -233,18 +222,18 @@ class CloudDatastoreImportEntitiesOperator(BaseOperator):
             labels=self.labels,
             project_id=self.project_id,
         )
-        operation_name = result['name']
+        operation_name = result["name"]
         result = ds_hook.poll_operation_until_done(operation_name, self.polling_interval_in_seconds)
 
-        state = result['metadata']['common']['state']
-        if state != 'SUCCESSFUL':
-            raise AirflowException(f'Operation failed: result={result}')
+        state = result["metadata"]["common"]["state"]
+        if state != "SUCCESSFUL":
+            raise AirflowException(f"Operation failed: result={result}")
 
         CloudDatastoreImportExportLink.persist(context=context, task_instance=self)
         return result
 
 
-class CloudDatastoreAllocateIdsOperator(BaseOperator):
+class CloudDatastoreAllocateIdsOperator(GoogleCloudBaseOperator):
     """
     Allocate IDs for incomplete keys. Return list of keys.
 
@@ -257,9 +246,6 @@ class CloudDatastoreAllocateIdsOperator(BaseOperator):
 
     :param partial_keys: a list of partial keys.
     :param project_id: Google Cloud project ID against which to make the request.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
@@ -280,11 +266,10 @@ class CloudDatastoreAllocateIdsOperator(BaseOperator):
     def __init__(
         self,
         *,
-        partial_keys: List,
-        project_id: Optional[str] = None,
-        delegate_to: Optional[str] = None,
-        gcp_conn_id: str = 'google_cloud_default',
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        partial_keys: list,
+        project_id: str | None = None,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -292,10 +277,9 @@ class CloudDatastoreAllocateIdsOperator(BaseOperator):
         self.partial_keys = partial_keys
         self.gcp_conn_id = gcp_conn_id
         self.project_id = project_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> list:
+    def execute(self, context: Context) -> list:
         hook = DatastoreHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -308,7 +292,7 @@ class CloudDatastoreAllocateIdsOperator(BaseOperator):
         return keys
 
 
-class CloudDatastoreBeginTransactionOperator(BaseOperator):
+class CloudDatastoreBeginTransactionOperator(GoogleCloudBaseOperator):
     """
     Begins a new transaction. Returns a transaction handle.
 
@@ -321,9 +305,6 @@ class CloudDatastoreBeginTransactionOperator(BaseOperator):
 
     :param transaction_options: Options for a new transaction.
     :param project_id: Google Cloud project ID against which to make the request.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
@@ -343,11 +324,10 @@ class CloudDatastoreBeginTransactionOperator(BaseOperator):
     def __init__(
         self,
         *,
-        transaction_options: Dict[str, Any],
-        project_id: Optional[str] = None,
-        delegate_to: Optional[str] = None,
-        gcp_conn_id: str = 'google_cloud_default',
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        transaction_options: dict[str, Any],
+        project_id: str | None = None,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -355,10 +335,9 @@ class CloudDatastoreBeginTransactionOperator(BaseOperator):
         self.transaction_options = transaction_options
         self.gcp_conn_id = gcp_conn_id
         self.project_id = project_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> str:
+    def execute(self, context: Context) -> str:
         hook = DatastoreHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -370,7 +349,7 @@ class CloudDatastoreBeginTransactionOperator(BaseOperator):
         return handle
 
 
-class CloudDatastoreCommitOperator(BaseOperator):
+class CloudDatastoreCommitOperator(GoogleCloudBaseOperator):
     """
     Commit a transaction, optionally creating, deleting or modifying some entities.
 
@@ -383,9 +362,6 @@ class CloudDatastoreCommitOperator(BaseOperator):
 
     :param body: the body of the commit request.
     :param project_id: Google Cloud project ID against which to make the request.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
@@ -406,11 +382,10 @@ class CloudDatastoreCommitOperator(BaseOperator):
     def __init__(
         self,
         *,
-        body: Dict[str, Any],
-        project_id: Optional[str] = None,
-        delegate_to: Optional[str] = None,
-        gcp_conn_id: str = 'google_cloud_default',
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        body: dict[str, Any],
+        project_id: str | None = None,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -418,10 +393,9 @@ class CloudDatastoreCommitOperator(BaseOperator):
         self.body = body
         self.gcp_conn_id = gcp_conn_id
         self.project_id = project_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> dict:
+    def execute(self, context: Context) -> dict:
         hook = DatastoreHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -434,7 +408,7 @@ class CloudDatastoreCommitOperator(BaseOperator):
         return response
 
 
-class CloudDatastoreRollbackOperator(BaseOperator):
+class CloudDatastoreRollbackOperator(GoogleCloudBaseOperator):
     """
     Roll back a transaction.
 
@@ -447,9 +421,6 @@ class CloudDatastoreRollbackOperator(BaseOperator):
 
     :param transaction: the transaction to roll back.
     :param project_id: Google Cloud project ID against which to make the request.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
@@ -470,10 +441,9 @@ class CloudDatastoreRollbackOperator(BaseOperator):
         self,
         *,
         transaction: str,
-        project_id: Optional[str] = None,
-        delegate_to: Optional[str] = None,
-        gcp_conn_id: str = 'google_cloud_default',
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        project_id: str | None = None,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -481,10 +451,9 @@ class CloudDatastoreRollbackOperator(BaseOperator):
         self.transaction = transaction
         self.gcp_conn_id = gcp_conn_id
         self.project_id = project_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         hook = DatastoreHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -495,7 +464,7 @@ class CloudDatastoreRollbackOperator(BaseOperator):
         )
 
 
-class CloudDatastoreRunQueryOperator(BaseOperator):
+class CloudDatastoreRunQueryOperator(GoogleCloudBaseOperator):
     """
     Run a query for entities. Returns the batch of query results.
 
@@ -508,9 +477,6 @@ class CloudDatastoreRunQueryOperator(BaseOperator):
 
     :param body: the body of the query request.
     :param project_id: Google Cloud project ID against which to make the request.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
@@ -530,11 +496,10 @@ class CloudDatastoreRunQueryOperator(BaseOperator):
     def __init__(
         self,
         *,
-        body: Dict[str, Any],
-        project_id: Optional[str] = None,
-        delegate_to: Optional[str] = None,
-        gcp_conn_id: str = 'google_cloud_default',
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        body: dict[str, Any],
+        project_id: str | None = None,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -542,10 +507,9 @@ class CloudDatastoreRunQueryOperator(BaseOperator):
         self.body = body
         self.gcp_conn_id = gcp_conn_id
         self.project_id = project_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> dict:
+    def execute(self, context: Context) -> dict:
         hook = DatastoreHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -557,7 +521,7 @@ class CloudDatastoreRunQueryOperator(BaseOperator):
         return response
 
 
-class CloudDatastoreGetOperationOperator(BaseOperator):
+class CloudDatastoreGetOperationOperator(GoogleCloudBaseOperator):
     """
     Gets the latest state of a long-running operation.
 
@@ -569,9 +533,6 @@ class CloudDatastoreGetOperationOperator(BaseOperator):
         https://cloud.google.com/datastore/docs/reference/data/rest/v1/projects.operations/get
 
     :param name: the name of the operation resource.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
@@ -592,19 +553,17 @@ class CloudDatastoreGetOperationOperator(BaseOperator):
         self,
         *,
         name: str,
-        delegate_to: Optional[str] = None,
-        gcp_conn_id: str = 'google_cloud_default',
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
 
         self.name = name
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = DatastoreHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -613,7 +572,7 @@ class CloudDatastoreGetOperationOperator(BaseOperator):
         return op
 
 
-class CloudDatastoreDeleteOperationOperator(BaseOperator):
+class CloudDatastoreDeleteOperationOperator(GoogleCloudBaseOperator):
     """
     Deletes the long-running operation.
 
@@ -625,9 +584,6 @@ class CloudDatastoreDeleteOperationOperator(BaseOperator):
         https://cloud.google.com/datastore/docs/reference/data/rest/v1/projects.operations/delete
 
     :param name: the name of the operation resource.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param gcp_conn_id: The connection ID to use connecting to Google Cloud.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
@@ -648,19 +604,17 @@ class CloudDatastoreDeleteOperationOperator(BaseOperator):
         self,
         *,
         name: str,
-        delegate_to: Optional[str] = None,
-        gcp_conn_id: str = 'google_cloud_default',
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
 
         self.name = name
         self.gcp_conn_id = gcp_conn_id
-        self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         hook = DatastoreHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,

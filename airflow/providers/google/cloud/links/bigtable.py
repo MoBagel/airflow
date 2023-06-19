@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
@@ -22,8 +23,7 @@ from airflow.providers.google.cloud.links.base import BaseGoogleLink
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
-BASE_LINK = "https://console.cloud.google.com"
-BIGTABLE_BASE_LINK = BASE_LINK + "/bigtable"
+BIGTABLE_BASE_LINK = "/bigtable"
 BIGTABLE_INSTANCE_LINK = BIGTABLE_BASE_LINK + "/instances/{instance_id}/overview?project={project_id}"
 BIGTABLE_CLUSTER_LINK = (
     BIGTABLE_BASE_LINK + "/instances/{instance_id}/clusters/{cluster_id}?project={project_id}"
@@ -32,7 +32,7 @@ BIGTABLE_TABLES_LINK = BIGTABLE_BASE_LINK + "/instances/{instance_id}/tables?pro
 
 
 class BigtableInstanceLink(BaseGoogleLink):
-    """Helper class for constructing Bigtable Instance link"""
+    """Helper class for constructing Bigtable Instance link."""
 
     name = "Bigtable Instance"
     key = "instance_key"
@@ -40,7 +40,7 @@ class BigtableInstanceLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance,
     ):
         task_instance.xcom_push(
@@ -54,7 +54,7 @@ class BigtableInstanceLink(BaseGoogleLink):
 
 
 class BigtableClusterLink(BaseGoogleLink):
-    """Helper class for constructing Bigtable Cluster link"""
+    """Helper class for constructing Bigtable Cluster link."""
 
     name = "Bigtable Cluster"
     key = "cluster_key"
@@ -62,7 +62,7 @@ class BigtableClusterLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance,
     ):
         task_instance.xcom_push(
@@ -77,7 +77,7 @@ class BigtableClusterLink(BaseGoogleLink):
 
 
 class BigtableTablesLink(BaseGoogleLink):
-    """Helper class for constructing Bigtable Tables link"""
+    """Helper class for constructing Bigtable Tables link."""
 
     name = "Bigtable Tables"
     key = "tables_key"
@@ -85,7 +85,7 @@ class BigtableTablesLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance,
     ):
         task_instance.xcom_push(

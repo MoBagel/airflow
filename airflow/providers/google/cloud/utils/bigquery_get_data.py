@@ -14,12 +14,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 from collections.abc import Iterator
 from logging import Logger
-from typing import List, Optional, Union
 
-from google.cloud.bigquery.table import Row
+from google.cloud.bigquery.table import Row, RowIterator
 
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
@@ -30,14 +30,14 @@ def bigquery_get_data(
     table_id: str,
     big_query_hook: BigQueryHook,
     batch_size: int,
-    selected_fields: Optional[Union[List[str], str]],
+    selected_fields: list[str] | str | None,
 ) -> Iterator:
-    logger.info('Fetching Data from:')
-    logger.info('Dataset: %s ; Table: %s', dataset_id, table_id)
+    logger.info("Fetching Data from:")
+    logger.info("Dataset: %s ; Table: %s", dataset_id, table_id)
 
     i = 0
     while True:
-        rows: List[Row] = big_query_hook.list_rows(
+        rows: list[Row] | RowIterator = big_query_hook.list_rows(
             dataset_id=dataset_id,
             table_id=table_id,
             max_results=batch_size,
@@ -45,11 +45,14 @@ def bigquery_get_data(
             start_index=i * batch_size,
         )
 
+        if isinstance(rows, RowIterator):
+            raise TypeError("BigQueryHook.list_rows() returns iterator when return_iterator=False (default)")
+
         if len(rows) == 0:
-            logger.info('Job Finished')
+            logger.info("Job Finished")
             return
 
-        logger.info('Total Extracted rows: %s', len(rows) + i * batch_size)
+        logger.info("Total Extracted rows: %s", len(rows) + i * batch_size)
 
         yield [row.values() for row in rows]
 

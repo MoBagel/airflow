@@ -15,22 +15,25 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import warnings
 
-from airflow.operators.sql import SQLCheckOperator
+from airflow.exceptions import AirflowProviderDeprecationWarning
+from airflow.providers.common.sql.operators.sql import SQLCheckOperator
 
 
 class DruidCheckOperator(SQLCheckOperator):
     """
     This class is deprecated.
-    Please use `airflow.operators.sql.SQLCheckOperator`.
+    Please use `airflow.providers.common.sql.operators.sql.SQLCheckOperator`.
     """
 
-    def __init__(self, druid_broker_conn_id: str = 'druid_broker_default', **kwargs):
+    def __init__(self, druid_broker_conn_id: str = "druid_broker_default", **kwargs):
         warnings.warn(
             """This class is deprecated.
-            Please use `airflow.operators.sql.SQLCheckOperator`.""",
-            DeprecationWarning,
+            Please use `airflow.providers.common.sql.operators.sql.SQLCheckOperator`.""",
+            AirflowProviderDeprecationWarning,
             stacklevel=2,
         )
         super().__init__(conn_id=druid_broker_conn_id, **kwargs)

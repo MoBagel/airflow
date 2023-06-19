@@ -16,13 +16,13 @@
 # specific language governing permissions and limitations
 # under the License.
 """Marks tasks APIs."""
+from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Collection, Iterable, Iterator, List, NamedTuple, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Collection, Iterable, Iterator, NamedTuple
 
-from sqlalchemy import or_
-from sqlalchemy.orm import lazyload
-from sqlalchemy.orm.session import Session as SASession
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session as SASession, lazyload
 
 from airflow.models.dag import DAG
 from airflow.models.dagrun import DagRun
@@ -38,7 +38,7 @@ from airflow.utils.types import DagRunType
 
 class _DagRunInfo(NamedTuple):
     logical_date: datetime
-    data_interval: Tuple[datetime, datetime]
+    data_interval: tuple[datetime, datetime]
 
 
 def _create_dagruns(
@@ -78,9 +78,9 @@ def _create_dagruns(
 @provide_session
 def set_state(
     *,
-    tasks: Collection[Union[Operator, Tuple[Operator, int]]],
-    run_id: Optional[str] = None,
-    execution_date: Optional[datetime] = None,
+    tasks: Collection[Operator | tuple[Operator, int]],
+    run_id: str | None = None,
+    execution_date: datetime | None = None,
     upstream: bool = False,
     downstream: bool = False,
     future: bool = False,
@@ -88,13 +88,14 @@ def set_state(
     state: TaskInstanceState = TaskInstanceState.SUCCESS,
     commit: bool = False,
     session: SASession = NEW_SESSION,
-) -> List[TaskInstance]:
+) -> list[TaskInstance]:
     """
-    Set the state of a task instance and if needed its relatives. Can set state
-    for future tasks (calculated from run_id) and retroactively
+    Set the state of a task instance and if needed its relatives.
+
+    Can set state for future tasks (calculated from run_id) and retroactively
     for past tasks. Will verify integrity of past dag runs in order to create
     tasks that did not exist. It will not create dag runs that are missing
-    on the schedule (but it will as for subdag dag runs if needed).
+    on the schedule (but it will, as for subdag, dag runs if needed).
 
     :param tasks: the iterable of tasks or (task, map_index) tuples from which to work.
         ``task.dag`` needs to be set
@@ -147,32 +148,36 @@ def set_state(
     qry_dag = get_all_dag_task_query(dag, session, state, task_id_map_index_list, dag_run_ids)
 
     if commit:
-        tis_altered = qry_dag.with_for_update().all()
+        tis_altered = session.scalars(qry_dag.with_for_update()).all()
         if sub_dag_run_ids:
             qry_sub_dag = all_subdag_tasks_query(sub_dag_run_ids, session, state, confirmed_dates)
-            tis_altered += qry_sub_dag.with_for_update().all()
+            tis_altered += session.scalars(qry_sub_dag.with_for_update()).all()
         for task_instance in tis_altered:
+            # The try_number was decremented when setting to up_for_reschedule and deferred.
+            # Increment it back when changing the state again
+            if task_instance.state in [State.DEFERRED, State.UP_FOR_RESCHEDULE]:
+                task_instance._try_number += 1
             task_instance.set_state(state, session=session)
         session.flush()
     else:
-        tis_altered = qry_dag.all()
+        tis_altered = session.scalars(qry_dag).all()
         if sub_dag_run_ids:
             qry_sub_dag = all_subdag_tasks_query(sub_dag_run_ids, session, state, confirmed_dates)
-            tis_altered += qry_sub_dag.all()
+            tis_altered += session.scalars(qry_sub_dag).all()
     return tis_altered
 
 
 def all_subdag_tasks_query(
-    sub_dag_run_ids: List[str],
+    sub_dag_run_ids: list[str],
     session: SASession,
     state: TaskInstanceState,
     confirmed_dates: Iterable[datetime],
 ):
-    """Get *all* tasks of the sub dags"""
+    """Get *all* tasks of the sub dags."""
     qry_sub_dag = (
-        session.query(TaskInstance)
-        .filter(TaskInstance.dag_id.in_(sub_dag_run_ids), TaskInstance.execution_date.in_(confirmed_dates))
-        .filter(or_(TaskInstance.state.is_(None), TaskInstance.state != state))
+        select(TaskInstance)
+        .where(TaskInstance.dag_id.in_(sub_dag_run_ids), TaskInstance.execution_date.in_(confirmed_dates))
+        .where(or_(TaskInstance.state.is_(None), TaskInstance.state != state))
     )
     return qry_sub_dag
 
@@ -181,17 +186,17 @@ def get_all_dag_task_query(
     dag: DAG,
     session: SASession,
     state: TaskInstanceState,
-    task_ids: List[Union[str, Tuple[str, int]]],
+    task_ids: list[str | tuple[str, int]],
     run_ids: Iterable[str],
 ):
-    """Get all tasks of the main dag that will be affected by a state change"""
-    qry_dag = session.query(TaskInstance).filter(
+    """Get all tasks of the main dag that will be affected by a state change."""
+    qry_dag = select(TaskInstance).where(
         TaskInstance.dag_id == dag.dag_id,
         TaskInstance.run_id.in_(run_ids),
         TaskInstance.ti_selector_condition(task_ids),
     )
 
-    qry_dag = qry_dag.filter(or_(TaskInstance.state.is_(None), TaskInstance.state != state)).options(
+    qry_dag = qry_dag.where(or_(TaskInstance.state.is_(None), TaskInstance.state != state)).options(
         lazyload(TaskInstance.dag_run)
     )
     return qry_dag
@@ -201,7 +206,7 @@ def _iter_subdag_run_ids(
     dag: DAG,
     session: SASession,
     state: DagRunState,
-    task_ids: List[str],
+    task_ids: list[str],
     commit: bool,
     confirmed_infos: Iterable[_DagRunInfo],
 ) -> Iterator[str]:
@@ -244,14 +249,13 @@ def verify_dagruns(
     session: SASession,
     current_task: Operator,
 ):
-    """Verifies integrity of dag_runs.
+    """Verify integrity of dag_runs.
 
     :param dag_runs: dag runs to verify
     :param commit: whether dag runs state should be updated
     :param state: state of the dag_run to set if commit is True
     :param session: session to use
     :param current_task: current task
-    :return:
     """
     for dag_run in dag_runs:
         dag_run.dag = current_task.subdag
@@ -261,7 +265,7 @@ def verify_dagruns(
             session.merge(dag_run)
 
 
-def _iter_existing_dag_run_infos(dag: DAG, run_ids: List[str], session: SASession) -> Iterator[_DagRunInfo]:
+def _iter_existing_dag_run_infos(dag: DAG, run_ids: list[str], session: SASession) -> Iterator[_DagRunInfo]:
     for dag_run in DagRun.find(dag_id=dag.dag_id, run_id=run_ids, session=session):
         dag_run.dag = dag
         dag_run.verify_integrity(session=session)
@@ -288,8 +292,8 @@ def find_task_relatives(tasks, downstream, upstream):
 @provide_session
 def get_execution_dates(
     dag: DAG, execution_date: datetime, future: bool, past: bool, *, session: SASession = NEW_SESSION
-) -> List[datetime]:
-    """Returns dates of DAG execution"""
+) -> list[datetime]:
+    """Return DAG execution dates."""
     latest_execution_date = dag.get_latest_execution_date(session=session)
     if latest_execution_date is None:
         raise ValueError(f"Received non-localized date {execution_date}")
@@ -301,7 +305,7 @@ def get_execution_dates(
     else:
         start_date = execution_date
     start_date = execution_date if not past else start_date
-    if not dag.timetable.can_run:
+    if not dag.timetable.can_be_scheduled:
         # If the DAG never schedules, need to look at existing DagRun if the user wants future or
         # past runs.
         dag_runs = dag.get_dagruns_between(start_date=start_date, end_date=end_date)
@@ -317,23 +321,20 @@ def get_execution_dates(
 
 @provide_session
 def get_run_ids(dag: DAG, run_id: str, future: bool, past: bool, session: SASession = NEW_SESSION):
-    """Returns run_ids of DAG execution"""
+    """Return DAG executions' run_ids."""
     last_dagrun = dag.get_last_dagrun(include_externally_triggered=True, session=session)
     current_dagrun = dag.get_dagrun(run_id=run_id, session=session)
-    first_dagrun = (
-        session.query(DagRun)
-        .filter(DagRun.dag_id == dag.dag_id)
-        .order_by(DagRun.execution_date.asc())
-        .first()
+    first_dagrun = session.scalar(
+        select(DagRun).filter(DagRun.dag_id == dag.dag_id).order_by(DagRun.execution_date.asc()).limit(1)
     )
 
     if last_dagrun is None:
-        raise ValueError(f'DagRun for {dag.dag_id} not found')
+        raise ValueError(f"DagRun for {dag.dag_id} not found")
 
     # determine run_id range of dag runs and tasks to consider
     end_date = last_dagrun.logical_date if future else current_dagrun.logical_date
     start_date = current_dagrun.logical_date if not past else first_dagrun.logical_date
-    if not dag.timetable.can_run:
+    if not dag.timetable.can_be_scheduled:
         # If the DAG never schedules, need to look at existing DagRun if the user wants future or
         # past runs.
         dag_runs = dag.get_dagruns_between(start_date=start_date, end_date=end_date, session=session)
@@ -348,16 +349,18 @@ def get_run_ids(dag: DAG, run_id: str, future: bool, past: bool, session: SASess
     return run_ids
 
 
-def _set_dag_run_state(dag_id: str, run_id: str, state: DagRunState, session: SASession = NEW_SESSION):
+def _set_dag_run_state(dag_id: str, run_id: str, state: DagRunState, session: SASession):
     """
-    Helper method that set dag run state in the DB.
+    Set dag run state in the DB.
 
     :param dag_id: dag_id of target dag run
     :param run_id: run id of target dag run
     :param state: target state
     :param session: database session
     """
-    dag_run = session.query(DagRun).filter(DagRun.dag_id == dag_id, DagRun.run_id == run_id).one()
+    dag_run = session.execute(
+        select(DagRun).where(DagRun.dag_id == dag_id, DagRun.run_id == run_id)
+    ).scalar_one()
     dag_run.state = state
     if state == State.RUNNING:
         dag_run.start_date = timezone.utcnow()
@@ -371,14 +374,15 @@ def _set_dag_run_state(dag_id: str, run_id: str, state: DagRunState, session: SA
 def set_dag_run_state_to_success(
     *,
     dag: DAG,
-    execution_date: Optional[datetime] = None,
-    run_id: Optional[str] = None,
+    execution_date: datetime | None = None,
+    run_id: str | None = None,
     commit: bool = False,
     session: SASession = NEW_SESSION,
-) -> List[TaskInstance]:
+) -> list[TaskInstance]:
     """
-    Set the dag run for a specific execution date and its task instances
-    to success.
+    Set the dag run's state to success.
+
+    Set for a specific execution date and its task instances to success.
 
     :param dag: the DAG of which to alter state
     :param execution_date: the execution date from which to start looking(deprecated)
@@ -400,10 +404,10 @@ def set_dag_run_state_to_success(
             raise ValueError(f"Received non-localized date {execution_date}")
         dag_run = dag.get_dagrun(execution_date=execution_date)
         if not dag_run:
-            raise ValueError(f'DagRun with execution_date: {execution_date} not found')
+            raise ValueError(f"DagRun with execution_date: {execution_date} not found")
         run_id = dag_run.run_id
     if not run_id:
-        raise ValueError(f'Invalid dag_run_id: {run_id}')
+        raise ValueError(f"Invalid dag_run_id: {run_id}")
     # Mark the dag run to success.
     if commit:
         _set_dag_run_state(dag.dag_id, run_id, DagRunState.SUCCESS, session)
@@ -418,14 +422,15 @@ def set_dag_run_state_to_success(
 def set_dag_run_state_to_failed(
     *,
     dag: DAG,
-    execution_date: Optional[datetime] = None,
-    run_id: Optional[str] = None,
+    execution_date: datetime | None = None,
+    run_id: str | None = None,
     commit: bool = False,
     session: SASession = NEW_SESSION,
-) -> List[TaskInstance]:
+) -> list[TaskInstance]:
     """
-    Set the dag run for a specific execution date or run_id and its running task instances
-    to failed.
+    Set the dag run's state to failed.
+
+    Set for a specific execution date and its task instances to failed.
 
     :param dag: the DAG of which to alter state
     :param execution_date: the execution date from which to start looking(deprecated)
@@ -446,11 +451,11 @@ def set_dag_run_state_to_failed(
             raise ValueError(f"Received non-localized date {execution_date}")
         dag_run = dag.get_dagrun(execution_date=execution_date)
         if not dag_run:
-            raise ValueError(f'DagRun with execution_date: {execution_date} not found')
+            raise ValueError(f"DagRun with execution_date: {execution_date} not found")
         run_id = dag_run.run_id
 
     if not run_id:
-        raise ValueError(f'Invalid dag_run_id: {run_id}')
+        raise ValueError(f"Invalid dag_run_id: {run_id}")
 
     # Mark the dag run to failed.
     if commit:
@@ -458,12 +463,15 @@ def set_dag_run_state_to_failed(
 
     # Mark only RUNNING task instances.
     task_ids = [task.task_id for task in dag.tasks]
-    tis = session.query(TaskInstance).filter(
-        TaskInstance.dag_id == dag.dag_id,
-        TaskInstance.run_id == run_id,
-        TaskInstance.task_id.in_(task_ids),
-        TaskInstance.state.in_(State.running),
+    tis = session.scalars(
+        select(TaskInstance).where(
+            TaskInstance.dag_id == dag.dag_id,
+            TaskInstance.run_id == run_id,
+            TaskInstance.task_id.in_(task_ids),
+            TaskInstance.state.in_([State.RUNNING, State.DEFERRED, State.UP_FOR_RESCHEDULE]),
+        )
     )
+
     task_ids_of_running_tis = [task_instance.task_id for task_instance in tis]
 
     tasks = []
@@ -474,11 +482,13 @@ def set_dag_run_state_to_failed(
         tasks.append(task)
 
     # Mark non-finished tasks as SKIPPED.
-    tis = session.query(TaskInstance).filter(
-        TaskInstance.dag_id == dag.dag_id,
-        TaskInstance.run_id == run_id,
-        TaskInstance.state.not_in(State.finished),
-        TaskInstance.state.not_in(State.running),
+    tis = session.scalars(
+        select(TaskInstance).filter(
+            TaskInstance.dag_id == dag.dag_id,
+            TaskInstance.run_id == run_id,
+            TaskInstance.state.not_in(State.finished),
+            TaskInstance.state.not_in([State.RUNNING, State.DEFERRED, State.UP_FOR_RESCHEDULE]),
+        )
     )
 
     tis = [ti for ti in tis]
@@ -493,11 +503,11 @@ def __set_dag_run_state_to_running_or_queued(
     *,
     new_state: DagRunState,
     dag: DAG,
-    execution_date: Optional[datetime] = None,
-    run_id: Optional[str] = None,
+    execution_date: datetime | None = None,
+    run_id: str | None = None,
     commit: bool = False,
-    session: SASession = NEW_SESSION,
-) -> List[TaskInstance]:
+    session: SASession,
+) -> list[TaskInstance]:
     """
     Set the dag run for a specific execution date to running.
 
@@ -509,7 +519,7 @@ def __set_dag_run_state_to_running_or_queued(
     :return: If commit is true, list of tasks that have been updated,
              otherwise list of tasks that will be updated
     """
-    res: List[TaskInstance] = []
+    res: list[TaskInstance] = []
 
     if not (execution_date is None) ^ (run_id is None):
         return res
@@ -523,10 +533,10 @@ def __set_dag_run_state_to_running_or_queued(
             raise ValueError(f"Received non-localized date {execution_date}")
         dag_run = dag.get_dagrun(execution_date=execution_date)
         if not dag_run:
-            raise ValueError(f'DagRun with execution_date: {execution_date} not found')
+            raise ValueError(f"DagRun with execution_date: {execution_date} not found")
         run_id = dag_run.run_id
     if not run_id:
-        raise ValueError(f'DagRun with run_id: {run_id} not found')
+        raise ValueError(f"DagRun with run_id: {run_id} not found")
     # Mark the dag run to running.
     if commit:
         _set_dag_run_state(dag.dag_id, run_id, new_state, session)
@@ -539,11 +549,16 @@ def __set_dag_run_state_to_running_or_queued(
 def set_dag_run_state_to_running(
     *,
     dag: DAG,
-    execution_date: Optional[datetime] = None,
-    run_id: Optional[str] = None,
+    execution_date: datetime | None = None,
+    run_id: str | None = None,
     commit: bool = False,
     session: SASession = NEW_SESSION,
-) -> List[TaskInstance]:
+) -> list[TaskInstance]:
+    """
+    Set the dag run's state to running.
+
+    Set for a specific execution date and its task instances to running.
+    """
     return __set_dag_run_state_to_running_or_queued(
         new_state=DagRunState.RUNNING,
         dag=dag,
@@ -558,11 +573,16 @@ def set_dag_run_state_to_running(
 def set_dag_run_state_to_queued(
     *,
     dag: DAG,
-    execution_date: Optional[datetime] = None,
-    run_id: Optional[str] = None,
+    execution_date: datetime | None = None,
+    run_id: str | None = None,
     commit: bool = False,
     session: SASession = NEW_SESSION,
-) -> List[TaskInstance]:
+) -> list[TaskInstance]:
+    """
+    Set the dag run's state to queued.
+
+    Set for a specific execution date and its task instances to queued.
+    """
     return __set_dag_run_state_to_running_or_queued(
         new_state=DagRunState.QUEUED,
         dag=dag,

@@ -23,7 +23,7 @@ Add tags to DAGs and use it for filtering in the UI
 
 .. versionadded:: 1.10.8
 
-In order to filter DAGs (e.g by team), you can add tags in each dag.
+In order to filter DAGs (e.g by team), you can add tags in each DAG.
 The filter is saved in a cookie and can be reset by the reset button.
 
 For example:
@@ -32,7 +32,7 @@ In your Dag file, pass a list of tags you want to add to DAG object:
 
 .. code-block:: python
 
-  dag = DAG(dag_id="example_dag_tag", schedule_interval="0 0 * * *", tags=["example"])
+  dag = DAG(dag_id="example_dag_tag", schedule="0 0 * * *", tags=["example"])
 
 
 **Screenshot**:

@@ -14,11 +14,22 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from __future__ import annotations
 
+import time
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any, Sequence
+
+from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from airflow.providers.amazon.aws.hooks.redshift_cluster import RedshiftHook
+from airflow.providers.amazon.aws.triggers.redshift_cluster import (
+    RedshiftCreateClusterSnapshotTrigger,
+    RedshiftCreateClusterTrigger,
+    RedshiftDeleteClusterTrigger,
+    RedshiftPauseClusterTrigger,
+    RedshiftResumeClusterTrigger,
+)
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
@@ -81,6 +92,10 @@ class RedshiftCreateClusterOperator(BaseOperator):
     :param default_iam_role_arn: ARN for the IAM role.
     :param aws_conn_id: str = The Airflow connection used for AWS credentials.
         The default connection id is ``aws_default``.
+    :param wait_for_completion: Whether wait for the cluster to be in ``available`` state
+    :param max_attempt: The maximum number of attempts to be made. Default: 5
+    :param poll_interval: The amount of time in seconds to wait between attempts. Default: 60
+    :param deferrable: If True, the operator will run in deferrable mode
     """
 
     template_fields: Sequence[str] = (
@@ -88,6 +103,7 @@ class RedshiftCreateClusterOperator(BaseOperator):
         "cluster_type",
         "node_type",
         "number_of_nodes",
+        "vpc_security_group_ids",
     )
     ui_color = "#eeaa11"
     ui_fgcolor = "#ffffff"
@@ -102,33 +118,37 @@ class RedshiftCreateClusterOperator(BaseOperator):
         cluster_type: str = "multi-node",
         db_name: str = "dev",
         number_of_nodes: int = 1,
-        cluster_security_groups: Optional[List[str]] = None,
-        vpc_security_group_ids: Optional[List[str]] = None,
-        cluster_subnet_group_name: Optional[str] = None,
-        availability_zone: Optional[str] = None,
-        preferred_maintenance_window: Optional[str] = None,
-        cluster_parameter_group_name: Optional[str] = None,
+        cluster_security_groups: list[str] | None = None,
+        vpc_security_group_ids: list[str] | None = None,
+        cluster_subnet_group_name: str | None = None,
+        availability_zone: str | None = None,
+        preferred_maintenance_window: str | None = None,
+        cluster_parameter_group_name: str | None = None,
         automated_snapshot_retention_period: int = 1,
-        manual_snapshot_retention_period: Optional[int] = None,
+        manual_snapshot_retention_period: int | None = None,
         port: int = 5439,
         cluster_version: str = "1.0",
         allow_version_upgrade: bool = True,
         publicly_accessible: bool = True,
         encrypted: bool = False,
-        hsm_client_certificate_identifier: Optional[str] = None,
-        hsm_configuration_identifier: Optional[str] = None,
-        elastic_ip: Optional[str] = None,
-        tags: Optional[List[Any]] = None,
-        kms_key_id: Optional[str] = None,
+        hsm_client_certificate_identifier: str | None = None,
+        hsm_configuration_identifier: str | None = None,
+        elastic_ip: str | None = None,
+        tags: list[Any] | None = None,
+        kms_key_id: str | None = None,
         enhanced_vpc_routing: bool = False,
-        additional_info: Optional[str] = None,
-        iam_roles: Optional[List[str]] = None,
-        maintenance_track_name: Optional[str] = None,
-        snapshot_schedule_identifier: Optional[str] = None,
-        availability_zone_relocation: Optional[bool] = None,
-        aqua_configuration_status: Optional[str] = None,
-        default_iam_role_arn: Optional[str] = None,
+        additional_info: str | None = None,
+        iam_roles: list[str] | None = None,
+        maintenance_track_name: str | None = None,
+        snapshot_schedule_identifier: str | None = None,
+        availability_zone_relocation: bool | None = None,
+        aqua_configuration_status: str | None = None,
+        default_iam_role_arn: str | None = None,
         aws_conn_id: str = "aws_default",
+        wait_for_completion: bool = False,
+        max_attempt: int = 5,
+        poll_interval: int = 60,
+        deferrable: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -166,12 +186,16 @@ class RedshiftCreateClusterOperator(BaseOperator):
         self.aqua_configuration_status = aqua_configuration_status
         self.default_iam_role_arn = default_iam_role_arn
         self.aws_conn_id = aws_conn_id
+        self.wait_for_completion = wait_for_completion
+        self.max_attempt = max_attempt
+        self.poll_interval = poll_interval
+        self.deferrable = deferrable
         self.kwargs = kwargs
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         redshift_hook = RedshiftHook(aws_conn_id=self.aws_conn_id)
         self.log.info("Creating Redshift cluster %s", self.cluster_identifier)
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
         if self.db_name:
             params["DBName"] = self.db_name
         if self.cluster_type:
@@ -238,20 +262,202 @@ class RedshiftCreateClusterOperator(BaseOperator):
             self.master_user_password,
             params,
         )
+        if self.deferrable:
+            self.defer(
+                trigger=RedshiftCreateClusterTrigger(
+                    cluster_identifier=self.cluster_identifier,
+                    poll_interval=self.poll_interval,
+                    max_attempt=self.max_attempt,
+                    aws_conn_id=self.aws_conn_id,
+                ),
+                method_name="execute_complete",
+            )
+        if self.wait_for_completion:
+            redshift_hook.get_conn().get_waiter("cluster_available").wait(
+                ClusterIdentifier=self.cluster_identifier,
+                WaiterConfig={
+                    "Delay": self.poll_interval,
+                    "MaxAttempts": self.max_attempt,
+                },
+            )
+
         self.log.info("Created Redshift cluster %s", self.cluster_identifier)
         self.log.info(cluster)
+
+    def execute_complete(self, context, event=None):
+        if event["status"] != "success":
+            raise AirflowException(f"Error creating cluster: {event}")
+        return
+
+
+class RedshiftCreateClusterSnapshotOperator(BaseOperator):
+    """
+    Creates a manual snapshot of the specified cluster. The cluster must be in the available state.
+
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:RedshiftCreateClusterSnapshotOperator`
+
+    :param snapshot_identifier: A unique identifier for the snapshot that you are requesting
+    :param cluster_identifier: The cluster identifier for which you want a snapshot
+    :param retention_period: The number of days that a manual snapshot is retained.
+        If the value is -1, the manual snapshot is retained indefinitely.
+    :parma tags: A list of tag instances
+    :param wait_for_completion: Whether wait for the cluster snapshot to be in ``available`` state
+    :param poll_interval: Time (in seconds) to wait between two consecutive calls to check state
+    :param max_attempt: The maximum number of attempts to be made to check the state
+    :param aws_conn_id: The Airflow connection used for AWS credentials.
+        The default connection id is ``aws_default``
+    :param deferrable: If True, the operator will run as a deferrable operator.
+    """
+
+    template_fields: Sequence[str] = (
+        "cluster_identifier",
+        "snapshot_identifier",
+    )
+
+    def __init__(
+        self,
+        *,
+        snapshot_identifier: str,
+        cluster_identifier: str,
+        retention_period: int = -1,
+        tags: list[Any] | None = None,
+        wait_for_completion: bool = False,
+        poll_interval: int = 15,
+        max_attempt: int = 20,
+        aws_conn_id: str = "aws_default",
+        deferrable: bool = False,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.snapshot_identifier = snapshot_identifier
+        self.cluster_identifier = cluster_identifier
+        self.retention_period = retention_period
+        self.tags = tags
+        self.wait_for_completion = wait_for_completion
+        self.poll_interval = poll_interval
+        self.max_attempt = max_attempt
+        self.deferrable = deferrable
+        self.aws_conn_id = aws_conn_id
+        self.redshift_hook = RedshiftHook(aws_conn_id=aws_conn_id)
+
+    def execute(self, context: Context) -> Any:
+        cluster_state = self.redshift_hook.cluster_status(cluster_identifier=self.cluster_identifier)
+        if cluster_state != "available":
+            raise AirflowException(
+                "Redshift cluster must be in available state. "
+                f"Redshift cluster current state is {cluster_state}"
+            )
+
+        self.redshift_hook.create_cluster_snapshot(
+            cluster_identifier=self.cluster_identifier,
+            snapshot_identifier=self.snapshot_identifier,
+            retention_period=self.retention_period,
+            tags=self.tags,
+        )
+        if self.deferrable:
+            self.defer(
+                trigger=RedshiftCreateClusterSnapshotTrigger(
+                    cluster_identifier=self.cluster_identifier,
+                    poll_interval=self.poll_interval,
+                    max_attempts=self.max_attempt,
+                    aws_conn_id=self.aws_conn_id,
+                ),
+                method_name="execute_complete",
+                # timeout is set to ensure that if a trigger dies, the timeout does not restart
+                # 60 seconds is added to allow the trigger to exit gracefully (i.e. yield TriggerEvent)
+                timeout=timedelta(seconds=self.max_attempt * self.poll_interval + 60),
+            )
+
+        if self.wait_for_completion:
+            self.redshift_hook.get_conn().get_waiter("snapshot_available").wait(
+                ClusterIdentifier=self.cluster_identifier,
+                WaiterConfig={
+                    "Delay": self.poll_interval,
+                    "MaxAttempts": self.max_attempt,
+                },
+            )
+
+    def execute_complete(self, context, event=None):
+        if event["status"] != "success":
+            raise AirflowException(f"Error creating snapshot: {event}")
+        else:
+            self.log.info("Cluster snapshot created.")
+        return
+
+
+class RedshiftDeleteClusterSnapshotOperator(BaseOperator):
+    """
+    Deletes the specified manual snapshot.
+
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:RedshiftDeleteClusterSnapshotOperator`
+
+    :param snapshot_identifier: A unique identifier for the snapshot that you are requesting
+    :param cluster_identifier: The unique identifier of the cluster the snapshot was created from
+    :param wait_for_completion: Whether wait for cluster deletion or not
+        The default value is ``True``
+    :param aws_conn_id: The Airflow connection used for AWS credentials.
+        The default connection id is ``aws_default``
+    :param poll_interval: Time (in seconds) to wait between two consecutive calls to check snapshot state
+    """
+
+    template_fields: Sequence[str] = (
+        "cluster_identifier",
+        "snapshot_identifier",
+    )
+
+    def __init__(
+        self,
+        *,
+        snapshot_identifier: str,
+        cluster_identifier: str,
+        wait_for_completion: bool = True,
+        aws_conn_id: str = "aws_default",
+        poll_interval: int = 10,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.snapshot_identifier = snapshot_identifier
+        self.cluster_identifier = cluster_identifier
+        self.wait_for_completion = wait_for_completion
+        self.poll_interval = poll_interval
+        self.redshift_hook = RedshiftHook(aws_conn_id=aws_conn_id)
+
+    def execute(self, context: Context) -> Any:
+        self.redshift_hook.get_conn().delete_cluster_snapshot(
+            SnapshotClusterIdentifier=self.cluster_identifier,
+            SnapshotIdentifier=self.snapshot_identifier,
+        )
+
+        if self.wait_for_completion:
+            while self.get_status() is not None:
+                time.sleep(self.poll_interval)
+
+    def get_status(self) -> str:
+        return self.redshift_hook.get_cluster_snapshot_status(
+            snapshot_identifier=self.snapshot_identifier,
+        )
 
 
 class RedshiftResumeClusterOperator(BaseOperator):
     """
-    Resume a paused AWS Redshift Cluster
+    Resume a paused AWS Redshift Cluster.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
         :ref:`howto/operator:RedshiftResumeClusterOperator`
 
-    :param cluster_identifier: id of the AWS Redshift Cluster
-    :param aws_conn_id: aws connection to use
+    :param cluster_identifier:  Unique identifier of the AWS Redshift cluster
+    :param aws_conn_id: The Airflow connection used for AWS credentials.
+        The default connection id is ``aws_default``
+    :param poll_interval: Time (in seconds) to wait between two consecutive calls to check cluster state
+    :param max_attempts: The maximum number of attempts to check the state of the cluster.
+    :param wait_for_completion: If True, the operator will wait for the cluster to be in the
+        `resumed` state. Default is False.
+    :param deferrable: If True, the operator will run as a deferrable operator.
     """
 
     template_fields: Sequence[str] = ("cluster_identifier",)
@@ -263,22 +469,71 @@ class RedshiftResumeClusterOperator(BaseOperator):
         *,
         cluster_identifier: str,
         aws_conn_id: str = "aws_default",
+        wait_for_completion: bool = False,
+        deferrable: bool = False,
+        poll_interval: int = 10,
+        max_attempts: int = 10,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.cluster_identifier = cluster_identifier
         self.aws_conn_id = aws_conn_id
+        self.wait_for_completion = wait_for_completion
+        self.deferrable = deferrable
+        self.max_attempts = max_attempts
+        self.poll_interval = poll_interval
+        # These parameters are used to address an issue with the boto3 API where the API
+        # prematurely reports the cluster as available to receive requests. This causes the cluster
+        # to reject initial attempts to resume the cluster despite reporting the correct state.
+        self._remaining_attempts = 10
+        self._attempt_interval = 15
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         redshift_hook = RedshiftHook(aws_conn_id=self.aws_conn_id)
-        cluster_state = redshift_hook.cluster_status(cluster_identifier=self.cluster_identifier)
-        if cluster_state == 'paused':
-            self.log.info("Starting Redshift cluster %s", self.cluster_identifier)
-            redshift_hook.get_conn().resume_cluster(ClusterIdentifier=self.cluster_identifier)
-        else:
-            self.log.warning(
-                "Unable to resume cluster since cluster is currently in status: %s", cluster_state
+        self.log.info("Starting resume cluster")
+        while self._remaining_attempts >= 1:
+            try:
+                redshift_hook.get_conn().resume_cluster(ClusterIdentifier=self.cluster_identifier)
+                break
+            except redshift_hook.get_conn().exceptions.InvalidClusterStateFault as error:
+                self._remaining_attempts = self._remaining_attempts - 1
+
+                if self._remaining_attempts > 0:
+                    self.log.error(
+                        "Unable to resume cluster. %d attempts remaining.", self._remaining_attempts
+                    )
+                    time.sleep(self._attempt_interval)
+                else:
+                    raise error
+        if self.deferrable:
+            self.defer(
+                trigger=RedshiftResumeClusterTrigger(
+                    cluster_identifier=self.cluster_identifier,
+                    poll_interval=self.poll_interval,
+                    max_attempts=self.max_attempts,
+                    aws_conn_id=self.aws_conn_id,
+                ),
+                method_name="execute_complete",
+                # timeout is set to ensure that if a trigger dies, the timeout does not restart
+                # 60 seconds is added to allow the trigger to exit gracefully (i.e. yield TriggerEvent)
+                timeout=timedelta(seconds=self.max_attempts * self.poll_interval + 60),
             )
+        if self.wait_for_completion:
+            waiter = redshift_hook.get_waiter("cluster_resumed")
+            waiter.wait(
+                ClusterIdentifier=self.cluster_identifier,
+                WaiterConfig={
+                    "Delay": self.poll_interval,
+                    "MaxAttempts": self.max_attempts,
+                },
+            )
+
+    def execute_complete(self, context, event=None):
+        if event["status"] != "success":
+            raise AirflowException(f"Error resuming cluster: {event}")
+        else:
+            self.log.info("Resumed cluster successfully")
+        return
 
 
 class RedshiftPauseClusterOperator(BaseOperator):
@@ -291,6 +546,9 @@ class RedshiftPauseClusterOperator(BaseOperator):
 
     :param cluster_identifier: id of the AWS Redshift Cluster
     :param aws_conn_id: aws connection to use
+    :param deferrable: Run operator in the deferrable mode
+    :param poll_interval: Time (in seconds) to wait between two consecutive calls to check cluster state
+    :param max_attempts: Maximum number of attempts to poll the cluster
     """
 
     template_fields: Sequence[str] = ("cluster_identifier",)
@@ -302,22 +560,59 @@ class RedshiftPauseClusterOperator(BaseOperator):
         *,
         cluster_identifier: str,
         aws_conn_id: str = "aws_default",
+        deferrable: bool = False,
+        poll_interval: int = 10,
+        max_attempts: int = 15,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.cluster_identifier = cluster_identifier
         self.aws_conn_id = aws_conn_id
+        self.deferrable = deferrable
+        self.max_attempts = max_attempts
+        self.poll_interval = poll_interval
+        # These parameters are used to address an issue with the boto3 API where the API
+        # prematurely reports the cluster as available to receive requests. This causes the cluster
+        # to reject initial attempts to pause the cluster despite reporting the correct state.
+        self._remaining_attempts = 10
+        self._attempt_interval = 15
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         redshift_hook = RedshiftHook(aws_conn_id=self.aws_conn_id)
-        cluster_state = redshift_hook.cluster_status(cluster_identifier=self.cluster_identifier)
-        if cluster_state == 'available':
-            self.log.info("Pausing Redshift cluster %s", self.cluster_identifier)
-            redshift_hook.get_conn().pause_cluster(ClusterIdentifier=self.cluster_identifier)
-        else:
-            self.log.warning(
-                "Unable to pause cluster since cluster is currently in status: %s", cluster_state
+        while self._remaining_attempts >= 1:
+            try:
+                redshift_hook.get_conn().pause_cluster(ClusterIdentifier=self.cluster_identifier)
+                break
+            except redshift_hook.get_conn().exceptions.InvalidClusterStateFault as error:
+                self._remaining_attempts = self._remaining_attempts - 1
+
+                if self._remaining_attempts > 0:
+                    self.log.error(
+                        "Unable to pause cluster. %d attempts remaining.", self._remaining_attempts
+                    )
+                    time.sleep(self._attempt_interval)
+                else:
+                    raise error
+        if self.deferrable:
+            self.defer(
+                trigger=RedshiftPauseClusterTrigger(
+                    cluster_identifier=self.cluster_identifier,
+                    poll_interval=self.poll_interval,
+                    max_attempts=self.max_attempts,
+                    aws_conn_id=self.aws_conn_id,
+                ),
+                method_name="execute_complete",
+                # timeout is set to ensure that if a trigger dies, the timeout does not restart
+                # 60 seconds is added to allow the trigger to exit gracefully (i.e. yield TriggerEvent)
+                timeout=timedelta(seconds=self.max_attempts * self.poll_interval + 60),
             )
+
+    def execute_complete(self, context, event=None):
+        if event["status"] != "success":
+            raise AirflowException(f"Error pausing cluster: {event}")
+        else:
+            self.log.info("Paused cluster successfully")
+        return
 
 
 class RedshiftDeleteClusterOperator(BaseOperator):
@@ -335,6 +630,8 @@ class RedshiftDeleteClusterOperator(BaseOperator):
         The default value is ``True``
     :param aws_conn_id: aws connection to use
     :param poll_interval: Time (in seconds) to wait between two consecutive calls to check cluster state
+    :param deferrable: Run operator in the deferrable mode.
+    :param max_attempts: (Deferrable mode only) The maximum number of attempts to be made
     """
 
     template_fields: Sequence[str] = ("cluster_identifier",)
@@ -346,10 +643,12 @@ class RedshiftDeleteClusterOperator(BaseOperator):
         *,
         cluster_identifier: str,
         skip_final_cluster_snapshot: bool = True,
-        final_cluster_snapshot_identifier: Optional[str] = None,
+        final_cluster_snapshot_identifier: str | None = None,
         wait_for_completion: bool = True,
         aws_conn_id: str = "aws_default",
-        poll_interval: float = 30.0,
+        poll_interval: int = 30,
+        deferrable: bool = False,
+        max_attempts: int = 30,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -357,27 +656,55 @@ class RedshiftDeleteClusterOperator(BaseOperator):
         self.skip_final_cluster_snapshot = skip_final_cluster_snapshot
         self.final_cluster_snapshot_identifier = final_cluster_snapshot_identifier
         self.wait_for_completion = wait_for_completion
-        self.redshift_hook = RedshiftHook(aws_conn_id=aws_conn_id)
         self.poll_interval = poll_interval
+        # These parameters are added to keep trying if there is a running operation in the cluster
+        # If there is a running operation in the cluster while trying to delete it, a InvalidClusterStateFault
+        # is thrown. In such case, retrying
+        self._attempts = 10
+        self._attempt_interval = 15
+        self.redshift_hook = RedshiftHook(aws_conn_id=aws_conn_id)
+        self.aws_conn_id = aws_conn_id
+        self.deferrable = deferrable
+        self.max_attempts = max_attempts
 
-    def execute(self, context: 'Context'):
-        self.delete_cluster()
+    def execute(self, context: Context):
 
-        if self.wait_for_completion:
-            cluster_status: str = self.check_status()
-            while cluster_status != "cluster_not_found":
-                self.log.info(
-                    "cluster status is %s. Sleeping for %s seconds.", cluster_status, self.poll_interval
+        while self._attempts >= 1:
+            try:
+                self.redshift_hook.delete_cluster(
+                    cluster_identifier=self.cluster_identifier,
+                    skip_final_cluster_snapshot=self.skip_final_cluster_snapshot,
+                    final_cluster_snapshot_identifier=self.final_cluster_snapshot_identifier,
                 )
-                time.sleep(self.poll_interval)
-                cluster_status = self.check_status()
+                break
+            except self.redshift_hook.get_conn().exceptions.InvalidClusterStateFault:
+                self._attempts = self._attempts - 1
 
-    def delete_cluster(self) -> None:
-        self.redshift_hook.delete_cluster(
-            cluster_identifier=self.cluster_identifier,
-            skip_final_cluster_snapshot=self.skip_final_cluster_snapshot,
-            final_cluster_snapshot_identifier=self.final_cluster_snapshot_identifier,
-        )
+                if self._attempts > 0:
+                    self.log.error("Unable to delete cluster. %d attempts remaining.", self._attempts)
+                    time.sleep(self._attempt_interval)
+                else:
+                    raise
+        if self.deferrable:
+            self.defer(
+                timeout=timedelta(seconds=self.max_attempts * self.poll_interval + 60),
+                trigger=RedshiftDeleteClusterTrigger(
+                    cluster_identifier=self.cluster_identifier,
+                    poll_interval=self.poll_interval,
+                    max_attempts=self.max_attempts,
+                    aws_conn_id=self.aws_conn_id,
+                ),
+                method_name="execute_complete",
+            )
+        elif self.wait_for_completion:
+            waiter = self.redshift_hook.get_conn().get_waiter("cluster_deleted")
+            waiter.wait(
+                ClusterIdentifier=self.cluster_identifier,
+                WaiterConfig={"Delay": self.poll_interval, "MaxAttempts": self.max_attempts},
+            )
 
-    def check_status(self) -> str:
-        return self.redshift_hook.cluster_status(self.cluster_identifier)
+    def execute_complete(self, context, event=None):
+        if event["status"] != "success":
+            raise AirflowException(f"Error deleting cluster: {event}")
+        else:
+            self.log.info("Cluster deleted successfully")

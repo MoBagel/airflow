@@ -15,15 +15,16 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-from unittest import TestCase, mock
+from __future__ import annotations
+
+from unittest import mock
 
 import pytest
 
 from airflow.providers.amazon.aws.utils.emailer import send_email
 
 
-class TestSendEmailSes(TestCase):
+class TestSendEmailSes:
     @mock.patch("airflow.providers.amazon.aws.utils.emailer.SesHook")
     def test_send_ses_email(self, mock_hook):
         send_email(

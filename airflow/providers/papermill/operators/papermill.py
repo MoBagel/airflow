@@ -15,7 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import TYPE_CHECKING, Dict, Optional, Sequence
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, ClassVar, Collection, Optional, Sequence
 
 import attr
 import papermill as pm
@@ -29,20 +31,29 @@ if TYPE_CHECKING:
 
 @attr.s(auto_attribs=True)
 class NoteBook(File):
-    """Jupyter notebook"""
+    """Jupyter notebook."""
 
-    type_hint: Optional[str] = "jupyter_notebook"
-    parameters: Optional[Dict] = {}
+    # For compatibility with Airflow 2.3:
+    # 1. Use predefined set because `File.template_fields` introduced in Airflow 2.4
+    # 2. Use old styled annotations because `cattrs` doesn't work well with PEP 604.
 
-    meta_schema: str = __name__ + '.NoteBook'
+    template_fields: ClassVar[Collection[str]] = {
+        "parameters",
+        *(File.template_fields if hasattr(File, "template_fields") else {"url"}),
+    }
+
+    type_hint: Optional[str] = "jupyter_notebook"  # noqa: UP007
+    parameters: Optional[dict] = {}  # noqa: UP007
+
+    meta_schema: str = __name__ + ".NoteBook"
 
 
 class PapermillOperator(BaseOperator):
     """
-    Executes a jupyter notebook through papermill that is annotated with parameters
+    Executes a jupyter notebook through papermill that is annotated with parameters.
 
-    :param input_nb: input notebook (can also be a NoteBook or a File inlet)
-    :param output_nb: output notebook (can also be a NoteBook or File outlet)
+    :param input_nb: input notebook, either path or NoteBook inlet.
+    :param output_nb: output notebook, either path or NoteBook outlet.
     :param parameters: the notebook parameters to set
     :param kernel_name: (optional) name of kernel to execute the notebook against
         (ignores kernel name in the notebook document metadata)
@@ -50,41 +61,48 @@ class PapermillOperator(BaseOperator):
 
     supports_lineage = True
 
-    template_fields: Sequence[str] = ('input_nb', 'output_nb', 'parameters', 'kernel_name', 'language_name')
+    template_fields: Sequence[str] = ("input_nb", "output_nb", "parameters", "kernel_name", "language_name")
 
     def __init__(
         self,
         *,
-        input_nb: Optional[str] = None,
-        output_nb: Optional[str] = None,
-        parameters: Optional[Dict] = None,
-        kernel_name: Optional[str] = None,
-        language_name: Optional[str] = None,
+        input_nb: str | NoteBook | None = None,
+        output_nb: str | NoteBook | None = None,
+        parameters: dict | None = None,
+        kernel_name: str | None = None,
+        language_name: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-
-        self.input_nb = input_nb
-        self.output_nb = output_nb
         self.parameters = parameters
+
+        if not input_nb:
+            raise ValueError("Input notebook is not specified")
+        elif not isinstance(input_nb, NoteBook):
+            self.input_nb = NoteBook(url=input_nb, parameters=self.parameters)
+        else:
+            self.input_nb = input_nb
+
+        if not output_nb:
+            raise ValueError("Output notebook is not specified")
+        elif not isinstance(output_nb, NoteBook):
+            self.output_nb = NoteBook(url=output_nb)
+        else:
+            self.output_nb = output_nb
+
         self.kernel_name = kernel_name
         self.language_name = language_name
-        if input_nb:
-            self.inlets.append(NoteBook(url=input_nb, parameters=self.parameters))
-        if output_nb:
-            self.outlets.append(NoteBook(url=output_nb))
 
-    def execute(self, context: 'Context'):
-        if not self.inlets or not self.outlets:
-            raise ValueError("Input notebook or output notebook is not specified")
+        self.inlets.append(self.input_nb)
+        self.outlets.append(self.output_nb)
 
-        for i, item in enumerate(self.inlets):
-            pm.execute_notebook(
-                item.url,
-                self.outlets[i].url,
-                parameters=item.parameters,
-                progress_bar=False,
-                report_mode=True,
-                kernel_name=self.kernel_name,
-                language=self.language_name,
-            )
+    def execute(self, context: Context):
+        pm.execute_notebook(
+            self.input_nb.url,
+            self.output_nb.url,
+            parameters=self.input_nb.parameters,
+            progress_bar=False,
+            report_mode=True,
+            kernel_name=self.kernel_name,
+            language=self.language_name,
+        )

@@ -16,13 +16,18 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains a Google Cloud Video Intelligence Hook."""
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from __future__ import annotations
+
+from typing import Sequence
 
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.api_core.operation import Operation
 from google.api_core.retry import Retry
-from google.cloud.videointelligence_v1 import VideoIntelligenceServiceClient
-from google.cloud.videointelligence_v1.types import VideoContext
+from google.cloud.videointelligence_v1 import (
+    Feature,
+    VideoContext,
+    VideoIntelligenceServiceClient,
+)
 
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
@@ -36,9 +41,6 @@ class CloudVideoIntelligenceHook(GoogleBaseHook):
     keyword arguments rather than positional.
 
     :param gcp_conn_id: The connection ID to use when fetching connection info.
-    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
-        if any. For this to work, the service account making the request must have
-        domain-wide delegation enabled.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -52,40 +54,40 @@ class CloudVideoIntelligenceHook(GoogleBaseHook):
     def __init__(
         self,
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
     ) -> None:
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
         super().__init__(
             gcp_conn_id=gcp_conn_id,
-            delegate_to=delegate_to,
             impersonation_chain=impersonation_chain,
         )
-        self._conn = None
+        self._conn: VideoIntelligenceServiceClient | None = None
 
     def get_conn(self) -> VideoIntelligenceServiceClient:
-        """
-        Returns Gcp Video Intelligence Service client
-
-        :rtype: google.cloud.videointelligence_v1.VideoIntelligenceServiceClient
-        """
+        """Returns Gcp Video Intelligence Service client."""
         if not self._conn:
             self._conn = VideoIntelligenceServiceClient(
-                credentials=self._get_credentials(), client_info=CLIENT_INFO
+                credentials=self.get_credentials(), client_info=CLIENT_INFO
             )
         return self._conn
 
     @GoogleBaseHook.quota_retry()
     def annotate_video(
         self,
-        input_uri: Optional[str] = None,
-        input_content: Optional[bytes] = None,
-        features: Optional[List[VideoIntelligenceServiceClient.enums.Feature]] = None,
-        video_context: Union[Dict, VideoContext] = None,
-        output_uri: Optional[str] = None,
-        location: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        input_uri: str | None = None,
+        input_content: bytes | None = None,
+        features: Sequence[Feature] | None = None,
+        video_context: dict | VideoContext | None = None,
+        output_uri: str | None = None,
+        location: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Operation:
         """
         Performs video annotation.
@@ -110,13 +112,16 @@ class CloudVideoIntelligenceHook(GoogleBaseHook):
         :param metadata: Optional, Additional metadata that is provided to the method.
         """
         client = self.get_conn()
+
         return client.annotate_video(
-            input_uri=input_uri,
-            input_content=input_content,
-            features=features,
-            video_context=video_context,
-            output_uri=output_uri,
-            location_id=location,
+            request={
+                "input_uri": input_uri,
+                "features": features,
+                "input_content": input_content,
+                "video_context": video_context,
+                "output_uri": output_uri,
+                "location_id": location,
+            },
             retry=retry,
             timeout=timeout,
             metadata=metadata,

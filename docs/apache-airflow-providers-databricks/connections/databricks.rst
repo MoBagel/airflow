@@ -34,7 +34,8 @@ There are several ways to connect to Databricks using Airflow.
    i.e. add a token to the Airflow connection. This is the recommended method.
 2. Use Databricks login credentials
    i.e. add the username and password used to login to the Databricks account to the Airflow connection.
-   Note that username/password authentication is discouraged and not supported for ``DatabricksSqlOperator``.
+   Note that username/password authentication is discouraged and not supported for
+   :class:`~airflow.providers.databricks.operators.databricks_sql.DatabricksSqlOperator`.
 3. Using Azure Active Directory (AAD) token generated from Azure Service Principal's ID and secret
    (only on Azure Databricks).  Service principal could be defined as a
    `user inside workspace <https://docs.microsoft.com/en-us/azure/databricks/dev-tools/api/latest/aad/service-prin-aad-token#--api-access-for-service-principals-that-are-azure-databricks-workspace-users-and-admins>`_, or `outside of workspace having Owner or Contributor permissions <https://docs.microsoft.com/en-us/azure/databricks/dev-tools/api/latest/aad/service-prin-aad-token#--api-access-for-service-principals-that-are-not-workspace-users>`_
@@ -55,11 +56,12 @@ Host (required)
 Login (optional)
     * If authentication with *Databricks login credentials* is used then specify the ``username`` used to login to Databricks.
     * If *authentication with Azure Service Principal* is used then specify the ID of the Azure Service Principal
+    * If authentication with *PAT* is used then either leave this field empty or use 'token' as login (both work, the only difference is that if login is empty then token will be sent in request header as Bearer token, if login is 'token' then it will be sent using Basic Auth which is allowed by Databricks API, this may be useful if you plan to reuse this connection with e.g. SimpleHttpOperator)
 
 Password (optional)
     * If authentication with *Databricks login credentials*  is used then specify the ``password`` used to login to Databricks.
     * If authentication with *Azure Service Principal* is used then specify the secret of the Azure Service Principal
-    * if authentication with *PAT* is used, then specify PAT and use ``token`` as the login (recommended)
+    * If authentication with *PAT* is used, then specify PAT (recommended)
 
 Extra (optional)
     Specify the extra parameter (as json dictionary) that can be used in the Databricks connection.
@@ -82,7 +84,8 @@ Extra (optional)
     * ``azure_resource_id``: optional Resource ID of the Azure Databricks workspace (required if managed identity isn't
       a user inside workspace)
 
-    Following parameters could be set when using ``DatabricksSqlOperator``:
+    Following parameters could be set when using
+    :class:`~airflow.providers.databricks.operators.databricks_sql.DatabricksSqlOperator`:
 
     * ``http_path``: optional HTTP path of Databricks SQL endpoint or Databricks cluster. See `documentation <https://docs.databricks.com/dev-tools/python-sql-connector.html#get-started>`_.
     * ``session_configuration``: optional map containing Spark session configuration parameters.

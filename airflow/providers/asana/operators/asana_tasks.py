@@ -15,8 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
 from airflow.providers.asana.hooks.asana import AsanaHook
@@ -27,8 +28,11 @@ if TYPE_CHECKING:
 
 class AsanaCreateTaskOperator(BaseOperator):
     """
-    This operator can be used to create Asana tasks. For more information on
-    Asana optional task parameters, see https://developers.asana.com/docs/create-a-task
+    This operator can be used to create Asana tasks.
+
+    .. seealso::
+        For more information on Asana optional task parameters:
+        https://developers.asana.com/docs/create-a-task
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -47,7 +51,7 @@ class AsanaCreateTaskOperator(BaseOperator):
         *,
         conn_id: str,
         name: str,
-        task_parameters: Optional[dict] = None,
+        task_parameters: dict | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -56,7 +60,7 @@ class AsanaCreateTaskOperator(BaseOperator):
         self.name = name
         self.task_parameters = task_parameters
 
-    def execute(self, context: 'Context') -> str:
+    def execute(self, context: Context) -> str:
         hook = AsanaHook(conn_id=self.conn_id)
         response = hook.create_task(self.name, self.task_parameters)
         self.log.info(response)
@@ -66,8 +70,10 @@ class AsanaCreateTaskOperator(BaseOperator):
 class AsanaUpdateTaskOperator(BaseOperator):
     """
     This operator can be used to update Asana tasks.
-    For more information on Asana optional task parameters, see
-    https://developers.asana.com/docs/update-a-task
+
+    .. seealso::
+        For more information on Asana optional task parameters:
+        https://developers.asana.com/docs/update-a-task
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -93,7 +99,7 @@ class AsanaUpdateTaskOperator(BaseOperator):
         self.asana_task_gid = asana_task_gid
         self.task_parameters = task_parameters
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         hook = AsanaHook(conn_id=self.conn_id)
         response = hook.update_task(self.asana_task_gid, self.task_parameters)
         self.log.info(response)
@@ -123,7 +129,7 @@ class AsanaDeleteTaskOperator(BaseOperator):
         self.conn_id = conn_id
         self.asana_task_gid = asana_task_gid
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         hook = AsanaHook(conn_id=self.conn_id)
         response = hook.delete_task(self.asana_task_gid)
         self.log.info(response)
@@ -132,7 +138,10 @@ class AsanaDeleteTaskOperator(BaseOperator):
 class AsanaFindTaskOperator(BaseOperator):
     """
     This operator can be used to retrieve Asana tasks that match various filters.
-    See https://developers.asana.com/docs/update-a-task for a list of possible filters.
+
+    .. seealso::
+        For a list of possible filters:
+        https://developers.asana.com/docs/update-a-task
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -148,7 +157,7 @@ class AsanaFindTaskOperator(BaseOperator):
         self,
         *,
         conn_id: str,
-        search_parameters: Optional[dict] = None,
+        search_parameters: dict | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -156,7 +165,7 @@ class AsanaFindTaskOperator(BaseOperator):
         self.conn_id = conn_id
         self.search_parameters = search_parameters
 
-    def execute(self, context: 'Context') -> list:
+    def execute(self, context: Context) -> list:
         hook = AsanaHook(conn_id=self.conn_id)
         response = hook.find_task(self.search_parameters)
         self.log.info(response)

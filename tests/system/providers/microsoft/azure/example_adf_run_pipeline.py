@@ -14,10 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import os
 from datetime import datetime, timedelta
+from typing import cast
 
 from airflow.models import DAG
+from airflow.models.xcom_arg import XComArg
 
 try:
     from airflow.operators.empty import EmptyOperator
@@ -25,7 +29,10 @@ except ModuleNotFoundError:
     from airflow.operators.dummy import DummyOperator as EmptyOperator  # type: ignore
 
 from airflow.providers.microsoft.azure.operators.data_factory import AzureDataFactoryRunPipelineOperator
-from airflow.providers.microsoft.azure.sensors.data_factory import AzureDataFactoryPipelineRunStatusSensor
+from airflow.providers.microsoft.azure.sensors.data_factory import (
+    AzureDataFactoryPipelineRunStatusAsyncSensor,
+    AzureDataFactoryPipelineRunStatusSensor,
+)
 from airflow.utils.edgemodifier import Label
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
@@ -34,7 +41,7 @@ DAG_ID = "example_adf_run_pipeline"
 with DAG(
     dag_id=DAG_ID,
     start_date=datetime(2021, 8, 13),
-    schedule_interval="@daily",
+    schedule="@daily",
     catchup=False,
     default_args={
         "retries": 1,
@@ -65,13 +72,35 @@ with DAG(
 
     pipeline_run_sensor = AzureDataFactoryPipelineRunStatusSensor(
         task_id="pipeline_run_sensor",
-        run_id=run_pipeline2.output["run_id"],
+        run_id=cast(str, XComArg(run_pipeline2, key="run_id")),
+    )
+
+    # Performs polling on the Airflow Triggerer thus freeing up resources on Airflow Worker
+    pipeline_run_sensor = AzureDataFactoryPipelineRunStatusSensor(
+        task_id="pipeline_run_sensor_defered",
+        run_id=cast(str, XComArg(run_pipeline2, key="run_id")),
+        deferrable=True,
+    )
+
+    # The following sensor is deprecated.
+    # Please use the AzureDataFactoryPipelineRunStatusSensor and set deferrable to True
+    pipeline_run_async_sensor = AzureDataFactoryPipelineRunStatusAsyncSensor(
+        task_id="pipeline_run_async_sensor",
+        run_id=cast(str, XComArg(run_pipeline2, key="run_id")),
     )
     # [END howto_operator_adf_run_pipeline_async]
 
+    # [START howto_operator_adf_run_pipeline_with_deferrable_flag]
+    run_pipeline3 = AzureDataFactoryRunPipelineOperator(
+        task_id="run_pipeline3", pipeline_name="pipeline1", parameters={"myParam": "value"}, deferrable=True
+    )
+    # [END howto_operator_adf_run_pipeline_with_deferrable_flag]
+
     begin >> Label("No async wait") >> run_pipeline1
     begin >> Label("Do async wait with sensor") >> run_pipeline2
-    [run_pipeline1, pipeline_run_sensor] >> end
+    begin >> Label("Do async wait with deferrable operator") >> run_pipeline3
+    [run_pipeline1, pipeline_run_sensor, pipeline_run_async_sensor, run_pipeline3] >> end
+    [run_pipeline1, pipeline_run_sensor, pipeline_run_async_sensor] >> end
 
     # Task dependency created via `XComArgs`:
     #   run_pipeline2 >> pipeline_run_sensor

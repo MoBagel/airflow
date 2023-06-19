@@ -16,7 +16,9 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google Campaign Manager sensor."""
-from typing import TYPE_CHECKING, Optional, Sequence, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence
 
 from airflow.providers.google.marketing_platform.hooks.campaign_manager import GoogleCampaignManagerHook
 from airflow.sensors.base import BaseSensorOperator
@@ -31,7 +33,7 @@ class GoogleCampaignManagerReportSensor(BaseSensorOperator):
 
     .. seealso::
         Check official API docs:
-        https://developers.google.com/doubleclick-advertisers/v3.3/reports/get
+        https://developers.google.com/doubleclick-advertisers/rest/v4/reports/get
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -40,7 +42,7 @@ class GoogleCampaignManagerReportSensor(BaseSensorOperator):
     :param profile_id: The DFA user profile ID.
     :param report_id: The ID of the report.
     :param file_id: The ID of the report file.
-    :param api_version: The version of the api that will be requested for example 'v3'.
+    :param api_version: The version of the api that will be requested, for example 'v4'.
     :param gcp_conn_id: The connection ID to use when fetching connection info.
     :param delegate_to: The account to impersonate using domain-wide delegation of authority,
         if any. For this to work, the service account making the request must have
@@ -62,7 +64,7 @@ class GoogleCampaignManagerReportSensor(BaseSensorOperator):
         "impersonation_chain",
     )
 
-    def poke(self, context: 'Context') -> bool:
+    def poke(self, context: Context) -> bool:
         hook = GoogleCampaignManagerHook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
@@ -71,7 +73,7 @@ class GoogleCampaignManagerReportSensor(BaseSensorOperator):
         )
         response = hook.get_report(profile_id=self.profile_id, report_id=self.report_id, file_id=self.file_id)
         self.log.info("Report status: %s", response["status"])
-        return response["status"] != "PROCESSING"
+        return response["status"] not in ("PROCESSING", "QUEUED")
 
     def __init__(
         self,
@@ -79,12 +81,12 @@ class GoogleCampaignManagerReportSensor(BaseSensorOperator):
         profile_id: str,
         report_id: str,
         file_id: str,
-        api_version: str = "v3.3",
+        api_version: str = "v4",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
+        delegate_to: str | None = None,
         mode: str = "reschedule",
         poke_interval: int = 60 * 5,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)

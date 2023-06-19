@@ -16,13 +16,15 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google DisplayVideo operators."""
+from __future__ import annotations
+
 import csv
 import json
 import shutil
 import tempfile
 import urllib.request
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
-from urllib.parse import urlparse
+from typing import TYPE_CHECKING, Any, Sequence
+from urllib.parse import urlsplit
 
 from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
@@ -33,20 +35,20 @@ if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class GoogleDisplayVideo360CreateReportOperator(BaseOperator):
+class GoogleDisplayVideo360CreateQueryOperator(BaseOperator):
     """
     Creates a query.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:GoogleDisplayVideo360CreateReportOperator`
+        ``GoogleDisplayVideo360CreateQueryOperator``
 
     .. seealso::
         Check also the official API docs:
-        `https://developers.google.com/bid-manager/v1/queries/createquery`
+        `https://developers.google.com/bid-manager/v2/queries/create`
 
     :param body: Report object passed to the request's body as described here:
-        https://developers.google.com/bid-manager/v1/queries#resource
+        https://developers.google.com/bid-manager/v2/queries#Query
     :param api_version: The version of the api that will be requested for example 'v3'.
     :param gcp_conn_id: The connection ID to use when fetching connection info.
     :param delegate_to: The account to impersonate using domain-wide delegation of authority,
@@ -71,11 +73,11 @@ class GoogleDisplayVideo360CreateReportOperator(BaseOperator):
     def __init__(
         self,
         *,
-        body: Dict[str, Any],
-        api_version: str = "v1",
+        body: dict[str, Any],
+        api_version: str = "v2",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -87,22 +89,22 @@ class GoogleDisplayVideo360CreateReportOperator(BaseOperator):
 
     def prepare_template(self) -> None:
         # If .json is passed then we have to read the file
-        if isinstance(self.body, str) and self.body.endswith('.json'):
+        if isinstance(self.body, str) and self.body.endswith(".json"):
             with open(self.body) as file:
                 self.body = json.load(file)
 
-    def execute(self, context: 'Context') -> dict:
+    def execute(self, context: Context) -> dict:
         hook = GoogleDisplayVideo360Hook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
             api_version=self.api_version,
             impersonation_chain=self.impersonation_chain,
         )
-        self.log.info("Creating Display & Video 360 report.")
+        self.log.info("Creating Display & Video 360 query.")
         response = hook.create_query(query=self.body)
-        report_id = response["queryId"]
-        self.xcom_push(context, key="report_id", value=report_id)
-        self.log.info("Created report with ID: %s", report_id)
+        query_id = response["queryId"]
+        self.xcom_push(context, key="query_id", value=query_id)
+        self.log.info("Created query with ID: %s", query_id)
         return response
 
 
@@ -116,7 +118,7 @@ class GoogleDisplayVideo360DeleteReportOperator(BaseOperator):
 
     .. seealso::
         Check also the official API docs:
-        `https://developers.google.com/bid-manager/v1/queries/deletequery`
+        `https://developers.google.com/bid-manager/v2/queries/delete`
 
     :param report_id: Report ID to delete.
     :param report_name: Name of the report to delete.
@@ -143,12 +145,12 @@ class GoogleDisplayVideo360DeleteReportOperator(BaseOperator):
     def __init__(
         self,
         *,
-        report_id: Optional[str] = None,
-        report_name: Optional[str] = None,
-        api_version: str = "v1",
+        report_id: str | None = None,
+        report_name: str | None = None,
+        api_version: str = "v2",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -165,7 +167,7 @@ class GoogleDisplayVideo360DeleteReportOperator(BaseOperator):
         if not (report_name or report_id):
             raise AirflowException("Provide one of the values: `report_name` or `report_id`.")
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         hook = GoogleDisplayVideo360Hook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
@@ -186,17 +188,17 @@ class GoogleDisplayVideo360DeleteReportOperator(BaseOperator):
             self.log.info("Report deleted.")
 
 
-class GoogleDisplayVideo360DownloadReportOperator(BaseOperator):
+class GoogleDisplayVideo360DownloadReportV2Operator(BaseOperator):
     """
     Retrieves a stored query.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:GoogleDisplayVideo360DownloadReportOperator`
+        :ref:`howto/operator:GoogleDisplayVideo360DownloadReportV2Operator`
 
     .. seealso::
         Check also the official API docs:
-        `https://developers.google.com/bid-manager/v1/queries/getquery`
+        `https://developers.google.com/bid-manager/v2/queries/get`
 
     :param report_id: Report ID to retrieve.
     :param bucket_name: The bucket to upload to.
@@ -219,6 +221,7 @@ class GoogleDisplayVideo360DownloadReportOperator(BaseOperator):
     """
 
     template_fields: Sequence[str] = (
+        "query_id",
         "report_id",
         "bucket_name",
         "report_name",
@@ -228,18 +231,20 @@ class GoogleDisplayVideo360DownloadReportOperator(BaseOperator):
     def __init__(
         self,
         *,
+        query_id: str,
         report_id: str,
         bucket_name: str,
-        report_name: Optional[str] = None,
+        report_name: str | None = None,
         gzip: bool = True,
         chunk_size: int = 10 * 1024 * 1024,
-        api_version: str = "v1",
+        api_version: str = "v2",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self.query_id = query_id
         self.report_id = report_id
         self.chunk_size = chunk_size
         self.gzip = gzip
@@ -260,7 +265,7 @@ class GoogleDisplayVideo360DownloadReportOperator(BaseOperator):
         bucket = name if not name.startswith("gs://") else name[5:]
         return bucket.strip("/")
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = GoogleDisplayVideo360Hook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
@@ -273,14 +278,14 @@ class GoogleDisplayVideo360DownloadReportOperator(BaseOperator):
             impersonation_chain=self.impersonation_chain,
         )
 
-        resource = hook.get_query(query_id=self.report_id)
-        # Check if report is ready
-        if resource["metadata"]["running"]:
-            raise AirflowException(f"Report {self.report_id} is still running")
+        resource = hook.get_report(query_id=self.query_id, report_id=self.report_id)
+        status = resource.get("metadata", {}).get("status", {}).get("state")
+        if resource and status not in ["DONE", "FAILED"]:
+            raise AirflowException(f"Report {self.report_id} for query {self.query_id} is still running")
 
         # If no custom report_name provided, use DV360 name
-        file_url = resource["metadata"]["googleCloudStoragePathForLatestReport"]
-        report_name = self.report_name or urlparse(file_url).path.split("/")[-1]
+        file_url = resource["metadata"]["googleCloudStoragePath"]
+        report_name = self.report_name or urlsplit(file_url).path.split("/")[-1]
         report_name = self._resolve_file_name(report_name)
 
         # Download the report
@@ -308,21 +313,21 @@ class GoogleDisplayVideo360DownloadReportOperator(BaseOperator):
         self.xcom_push(context, key="report_name", value=report_name)
 
 
-class GoogleDisplayVideo360RunReportOperator(BaseOperator):
+class GoogleDisplayVideo360RunQueryOperator(BaseOperator):
     """
     Runs a stored query to generate a report.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:GoogleDisplayVideo360RunReportOperator`
+        :ref:`howto/operator:GoogleDisplayVideo360RunQueryOperator`
 
     .. seealso::
         Check also the official API docs:
-        `https://developers.google.com/bid-manager/v1/queries/runquery`
+        `https://developers.google.com/bid-manager/v2/queries/run`
 
     :param report_id: Report ID to run.
     :param parameters: Parameters for running a report as described here:
-        https://developers.google.com/bid-manager/v1/queries/runquery
+        https://developers.google.com/bid-manager/v2/queries/run
     :param api_version: The version of the api that will be requested for example 'v3'.
     :param gcp_conn_id: The connection ID to use when fetching connection info.
     :param delegate_to: The account to impersonate using domain-wide delegation of authority,
@@ -339,7 +344,7 @@ class GoogleDisplayVideo360RunReportOperator(BaseOperator):
     """
 
     template_fields: Sequence[str] = (
-        "report_id",
+        "query_id",
         "parameters",
         "impersonation_chain",
     )
@@ -347,23 +352,23 @@ class GoogleDisplayVideo360RunReportOperator(BaseOperator):
     def __init__(
         self,
         *,
-        report_id: str,
-        parameters: Optional[Dict[str, Any]] = None,
-        api_version: str = "v1",
+        query_id: str,
+        parameters: dict[str, Any] | None = None,
+        api_version: str = "v2",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.report_id = report_id
+        self.query_id = query_id
         self.api_version = api_version
         self.gcp_conn_id = gcp_conn_id
         self.delegate_to = delegate_to
         self.parameters = parameters
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> dict:
         hook = GoogleDisplayVideo360Hook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
@@ -371,11 +376,14 @@ class GoogleDisplayVideo360RunReportOperator(BaseOperator):
             impersonation_chain=self.impersonation_chain,
         )
         self.log.info(
-            "Running report %s with the following parameters:\n %s",
-            self.report_id,
+            "Running query %s with the following parameters:\n %s",
+            self.query_id,
             self.parameters,
         )
-        hook.run_query(query_id=self.report_id, params=self.parameters)
+        response = hook.run_query(query_id=self.query_id, params=self.parameters)
+        self.xcom_push(context, key="query_id", value=response["key"]["queryId"])
+        self.xcom_push(context, key="report_id", value=response["key"]["reportId"])
+        return response
 
 
 class GoogleDisplayVideo360DownloadLineItemsOperator(BaseOperator):
@@ -405,14 +413,14 @@ class GoogleDisplayVideo360DownloadLineItemsOperator(BaseOperator):
     def __init__(
         self,
         *,
-        request_body: Dict[str, Any],
+        request_body: dict[str, Any],
         bucket_name: str,
         object_name: str,
         gzip: bool = False,
         api_version: str = "v1.1",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -425,7 +433,7 @@ class GoogleDisplayVideo360DownloadLineItemsOperator(BaseOperator):
         self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> str:
+    def execute(self, context: Context) -> str:
         gcs_hook = GCSHook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
@@ -439,7 +447,7 @@ class GoogleDisplayVideo360DownloadLineItemsOperator(BaseOperator):
         )
 
         self.log.info("Retrieving report...")
-        content: List[str] = hook.download_line_items(request_body=self.request_body)
+        content: list[str] = hook.download_line_items(request_body=self.request_body)
 
         with tempfile.NamedTemporaryFile("w+") as temp_file:
             writer = csv.writer(temp_file)
@@ -487,8 +495,8 @@ class GoogleDisplayVideo360UploadLineItemsOperator(BaseOperator):
         object_name: str,
         api_version: str = "v1.1",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -499,7 +507,7 @@ class GoogleDisplayVideo360UploadLineItemsOperator(BaseOperator):
         self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         gcs_hook = GCSHook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
@@ -565,11 +573,11 @@ class GoogleDisplayVideo360CreateSDFDownloadTaskOperator(BaseOperator):
     def __init__(
         self,
         *,
-        body_request: Dict[str, Any],
+        body_request: dict[str, Any],
         api_version: str = "v1",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -579,7 +587,7 @@ class GoogleDisplayVideo360CreateSDFDownloadTaskOperator(BaseOperator):
         self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> Dict[str, Any]:
+    def execute(self, context: Context) -> dict[str, Any]:
         hook = GoogleDisplayVideo360Hook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,
@@ -645,8 +653,8 @@ class GoogleDisplayVideo360SDFtoGCSOperator(BaseOperator):
         gzip: bool = False,
         api_version: str = "v1",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -659,7 +667,7 @@ class GoogleDisplayVideo360SDFtoGCSOperator(BaseOperator):
         self.delegate_to = delegate_to
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context') -> str:
+    def execute(self, context: Context) -> str:
         hook = GoogleDisplayVideo360Hook(
             gcp_conn_id=self.gcp_conn_id,
             delegate_to=self.delegate_to,

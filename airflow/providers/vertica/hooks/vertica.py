@@ -15,7 +15,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
+from __future__ import annotations
 
 from vertica_python import connect
 
@@ -25,20 +25,20 @@ from airflow.providers.common.sql.hooks.sql import DbApiHook
 class VerticaHook(DbApiHook):
     """Interact with Vertica."""
 
-    conn_name_attr = 'vertica_conn_id'
-    default_conn_name = 'vertica_default'
-    conn_type = 'vertica'
-    hook_name = 'Vertica'
+    conn_name_attr = "vertica_conn_id"
+    default_conn_name = "vertica_default"
+    conn_type = "vertica"
+    hook_name = "Vertica"
     supports_autocommit = True
 
     def get_conn(self) -> connect:
-        """Return verticaql connection object"""
+        """Return verticaql connection object."""
         conn = self.get_connection(self.vertica_conn_id)  # type: ignore
         conn_config = {
             "user": conn.login,
-            "password": conn.password or '',
+            "password": conn.password or "",
             "database": conn.schema,
-            "host": conn.host or 'localhost',
+            "host": conn.host or "localhost",
         }
 
         if not conn.port:

@@ -15,18 +15,18 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 """This module contains a Google Cloud Vertex AI hook.
 
-.. spelling::
+.. spelling:word-list::
 
     jsonl
     codepoints
     aiplatform
     gapic
 """
+from __future__ import annotations
 
-from typing import Dict, Optional, Sequence, Tuple, Union
+from typing import Sequence
 
 from google.api_core.client_options import ClientOptions
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
@@ -46,28 +46,32 @@ class BatchPredictionJobHook(GoogleBaseHook):
     def __init__(
         self,
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
     ) -> None:
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
         super().__init__(
             gcp_conn_id=gcp_conn_id,
-            delegate_to=delegate_to,
             impersonation_chain=impersonation_chain,
         )
-        self._batch_prediction_job: Optional[BatchPredictionJob] = None
+        self._batch_prediction_job: BatchPredictionJob | None = None
 
-    def get_job_service_client(self, region: Optional[str] = None) -> JobServiceClient:
+    def get_job_service_client(self, region: str | None = None) -> JobServiceClient:
         """Returns JobServiceClient."""
-        if region and region != 'global':
-            client_options = ClientOptions(api_endpoint=f'{region}-aiplatform.googleapis.com:443')
+        if region and region != "global":
+            client_options = ClientOptions(api_endpoint=f"{region}-aiplatform.googleapis.com:443")
         else:
             client_options = ClientOptions()
 
         return JobServiceClient(
-            credentials=self._get_credentials(), client_info=self.client_info, client_options=client_options
+            credentials=self.get_credentials(), client_info=self.client_info, client_options=client_options
         )
 
-    def wait_for_operation(self, operation: Operation, timeout: Optional[float] = None):
+    def wait_for_operation(self, operation: Operation, timeout: float | None = None):
         """Waits for long-lasting operation to complete."""
         try:
             return operation.result(timeout=timeout)
@@ -76,12 +80,12 @@ class BatchPredictionJobHook(GoogleBaseHook):
             raise AirflowException(error)
 
     @staticmethod
-    def extract_batch_prediction_job_id(obj: Dict) -> str:
+    def extract_batch_prediction_job_id(obj: dict) -> str:
         """Returns unique id of the batch_prediction_job."""
         return obj["name"].rpartition("/")[-1]
 
     def cancel_batch_prediction_job(self) -> None:
-        """Cancel BatchPredictionJob"""
+        """Cancel BatchPredictionJob."""
         if self._batch_prediction_job:
             self._batch_prediction_job.cancel()
 
@@ -91,25 +95,27 @@ class BatchPredictionJobHook(GoogleBaseHook):
         project_id: str,
         region: str,
         job_display_name: str,
-        model_name: Union[str, "Model"],
+        model_name: str | Model,
         instances_format: str = "jsonl",
         predictions_format: str = "jsonl",
-        gcs_source: Optional[Union[str, Sequence[str]]] = None,
-        bigquery_source: Optional[str] = None,
-        gcs_destination_prefix: Optional[str] = None,
-        bigquery_destination_prefix: Optional[str] = None,
-        model_parameters: Optional[Dict] = None,
-        machine_type: Optional[str] = None,
-        accelerator_type: Optional[str] = None,
-        accelerator_count: Optional[int] = None,
-        starting_replica_count: Optional[int] = None,
-        max_replica_count: Optional[int] = None,
-        generate_explanation: Optional[bool] = False,
-        explanation_metadata: Optional["explain.ExplanationMetadata"] = None,
-        explanation_parameters: Optional["explain.ExplanationParameters"] = None,
-        labels: Optional[Dict[str, str]] = None,
-        encryption_spec_key_name: Optional[str] = None,
+        gcs_source: str | Sequence[str] | None = None,
+        bigquery_source: str | None = None,
+        gcs_destination_prefix: str | None = None,
+        bigquery_destination_prefix: str | None = None,
+        model_parameters: dict | None = None,
+        machine_type: str | None = None,
+        accelerator_type: str | None = None,
+        accelerator_count: int | None = None,
+        starting_replica_count: int | None = None,
+        max_replica_count: int | None = None,
+        generate_explanation: bool | None = False,
+        explanation_metadata: explain.ExplanationMetadata | None = None,
+        explanation_parameters: explain.ExplanationParameters | None = None,
+        labels: dict[str, str] | None = None,
+        encryption_spec_key_name: str | None = None,
         sync: bool = True,
+        create_request_timeout: float | None = None,
+        batch_size: int | None = None,
     ) -> BatchPredictionJob:
         """
         Create a batch prediction job.
@@ -203,6 +209,14 @@ class BatchPredictionJobHook(GoogleBaseHook):
         :param sync: Whether to execute this method synchronously. If False, this method will be executed in
             concurrent Future and any downstream object will be immediately returned and synced when the
             Future has completed.
+        :param create_request_timeout: Optional. The timeout for the create request in seconds.
+        :param batch_size: Optional. The number of the records (e.g. instances)
+            of the operation given in each batch
+            to a machine replica. Machine type, and size of a single record should be considered
+            when setting this parameter, higher value speeds up the batch operation's execution,
+            but too high value will result in a whole batch not fitting in a machine's memory,
+            and the whole operation will fail.
+            The default value is same as in the aiplatform's BatchPredictionJob.
         """
         self._batch_prediction_job = BatchPredictionJob.create(
             job_display_name=job_display_name,
@@ -225,9 +239,11 @@ class BatchPredictionJobHook(GoogleBaseHook):
             labels=labels,
             project=project_id,
             location=region,
-            credentials=self._get_credentials(),
+            credentials=self.get_credentials(),
             encryption_spec_key_name=encryption_spec_key_name,
             sync=sync,
+            create_request_timeout=create_request_timeout,
+            batch_size=batch_size,
         )
         return self._batch_prediction_job
 
@@ -237,9 +253,9 @@ class BatchPredictionJobHook(GoogleBaseHook):
         project_id: str,
         region: str,
         batch_prediction_job: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> Operation:
         """
         Deletes a BatchPredictionJob. Can only be called on jobs that already finished.
@@ -256,7 +272,7 @@ class BatchPredictionJobHook(GoogleBaseHook):
 
         result = client.delete_batch_prediction_job(
             request={
-                'name': name,
+                "name": name,
             },
             retry=retry,
             timeout=timeout,
@@ -270,12 +286,12 @@ class BatchPredictionJobHook(GoogleBaseHook):
         project_id: str,
         region: str,
         batch_prediction_job: str,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> BatchPredictionJob:
         """
-        Gets a BatchPredictionJob
+        Gets a BatchPredictionJob.
 
         :param project_id: Required. The ID of the Google Cloud project that the service belongs to.
         :param region: Required. The ID of the Google Cloud region that the service belongs to.
@@ -289,7 +305,7 @@ class BatchPredictionJobHook(GoogleBaseHook):
 
         result = client.get_batch_prediction_job(
             request={
-                'name': name,
+                "name": name,
             },
             retry=retry,
             timeout=timeout,
@@ -302,13 +318,13 @@ class BatchPredictionJobHook(GoogleBaseHook):
         self,
         project_id: str,
         region: str,
-        filter: Optional[str] = None,
-        page_size: Optional[int] = None,
-        page_token: Optional[str] = None,
-        read_mask: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        filter: str | None = None,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        read_mask: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
     ) -> ListBatchPredictionJobsPager:
         """
         Lists BatchPredictionJobs in a Location.
@@ -337,11 +353,11 @@ class BatchPredictionJobHook(GoogleBaseHook):
 
         result = client.list_batch_prediction_jobs(
             request={
-                'parent': parent,
-                'filter': filter,
-                'page_size': page_size,
-                'page_token': page_token,
-                'read_mask': read_mask,
+                "parent": parent,
+                "filter": filter,
+                "page_size": page_size,
+                "page_token": page_token,
+                "read_mask": read_mask,
             },
             retry=retry,
             timeout=timeout,

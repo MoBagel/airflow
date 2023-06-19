@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import datetime
 import operator
 import os
@@ -25,12 +27,14 @@ from sqlalchemy.orm import Session
 
 from airflow.configuration import conf
 from airflow.models.dagrun import DagRun, DagRunType
-from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
-from airflow.models.xcom import XCOM_RETURN_KEY, BaseXCom, XCom, resolve_xcom_backend
+from airflow.models.taskinstance import TaskInstance
+from airflow.models.taskinstancekey import TaskInstanceKey
+from airflow.models.xcom import BaseXCom, XCom, resolve_xcom_backend
 from airflow.operators.empty import EmptyOperator
 from airflow.settings import json
 from airflow.utils import timezone
 from airflow.utils.session import create_session
+from airflow.utils.xcom import XCOM_RETURN_KEY
 from tests.test_utils.config import conf_vars
 
 
@@ -201,8 +205,8 @@ class TestXCom:
         assert value == {"key": "value"}
         XCom.orm_deserialize_value.assert_not_called()
 
-    @conf_vars({("core", "enable_xcom_pickling"): 'False'})
-    @mock.patch('airflow.models.xcom.conf.getimport')
+    @conf_vars({("core", "enable_xcom_pickling"): "False"})
+    @mock.patch("airflow.models.xcom.conf.getimport")
     def test_set_serialize_call_old_signature(self, get_import, task_instance):
         """
         When XCom.serialize_value takes only param ``value``, other kwargs should be ignored.
@@ -213,7 +217,7 @@ class TestXCom:
             @staticmethod
             def serialize_value(value, **kwargs):
                 serialize_watcher(value=value, **kwargs)
-                return json.dumps(value).encode('utf-8')
+                return json.dumps(value).encode("utf-8")
 
         get_import.return_value = OldSignatureXCom
 
@@ -227,8 +231,8 @@ class TestXCom:
         )
         serialize_watcher.assert_called_once_with(value={"my_xcom_key": "my_xcom_value"})
 
-    @conf_vars({("core", "enable_xcom_pickling"): 'False'})
-    @mock.patch('airflow.models.xcom.conf.getimport')
+    @conf_vars({("core", "enable_xcom_pickling"): "False"})
+    @mock.patch("airflow.models.xcom.conf.getimport")
     def test_set_serialize_call_current_signature(self, get_import, task_instance):
         """
         When XCom.serialize_value includes params execution_date, key, dag_id, task_id and run_id,
@@ -254,7 +258,7 @@ class TestXCom:
                     run_id=run_id,
                     map_index=map_index,
                 )
-                return json.dumps(value).encode('utf-8')
+                return json.dumps(value).encode("utf-8")
 
         get_import.return_value = CurrentSignatureXCom
 

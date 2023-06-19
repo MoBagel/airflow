@@ -15,12 +15,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
+from __future__ import annotations
 
 import datetime
 import ftplib
 import os.path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable
 
 from airflow.hooks.base import BaseHook
 
@@ -37,15 +37,15 @@ class FTPHook(BaseHook):
         reference.
     """
 
-    conn_name_attr = 'ftp_conn_id'
-    default_conn_name = 'ftp_default'
-    conn_type = 'ftp'
-    hook_name = 'FTP'
+    conn_name_attr = "ftp_conn_id"
+    default_conn_name = "ftp_default"
+    conn_type = "ftp"
+    hook_name = "FTP"
 
     def __init__(self, ftp_conn_id: str = default_conn_name) -> None:
         super().__init__()
         self.ftp_conn_id = ftp_conn_id
-        self.conn: Optional[ftplib.FTP] = None
+        self.conn: ftplib.FTP | None = None
 
     def __enter__(self):
         return self
@@ -55,7 +55,7 @@ class FTPHook(BaseHook):
             self.close_conn()
 
     def get_conn(self) -> ftplib.FTP:
-        """Returns a FTP connection object"""
+        """Returns a FTP connection object."""
         if self.conn is None:
             params = self.get_connection(self.ftp_conn_id)
             pasv = params.extra_dejson.get("passive", True)
@@ -67,7 +67,7 @@ class FTPHook(BaseHook):
     def close_conn(self):
         """
         Closes the connection. An error will occur if the
-        connection wasn't ever opened.
+        connection was not ever opened.
         """
         conn = self.conn
         conn.quit()
@@ -85,7 +85,7 @@ class FTPHook(BaseHook):
         files = dict(conn.mlsd())
         return files
 
-    def list_directory(self, path: str) -> List[str]:
+    def list_directory(self, path: str) -> list[str]:
         """
         Returns a list of files on the remote system.
 
@@ -119,7 +119,7 @@ class FTPHook(BaseHook):
         self,
         remote_full_path: str,
         local_full_path_or_buffer: Any,
-        callback: Optional[Callable] = None,
+        callback: Callable | None = None,
         block_size: int = 8192,
     ) -> None:
         """
@@ -178,7 +178,7 @@ class FTPHook(BaseHook):
         # file-like buffer
         if not callback:
             if is_path:
-                output_handle = open(local_full_path_or_buffer, 'wb')
+                output_handle = open(local_full_path_or_buffer, "wb")
             else:
                 output_handle = local_full_path_or_buffer
 
@@ -186,9 +186,9 @@ class FTPHook(BaseHook):
 
         remote_path, remote_file_name = os.path.split(remote_full_path)
         conn.cwd(remote_path)
-        self.log.info('Retrieving file from FTP: %s', remote_full_path)
-        conn.retrbinary(f'RETR {remote_file_name}', callback, block_size)
-        self.log.info('Finished retrieving file from FTP: %s', remote_full_path)
+        self.log.info("Retrieving file from FTP: %s", remote_full_path)
+        conn.retrbinary(f"RETR {remote_file_name}", callback, block_size)
+        self.log.info("Finished retrieving file from FTP: %s", remote_full_path)
 
         if is_path and output_handle:
             output_handle.close()
@@ -213,12 +213,12 @@ class FTPHook(BaseHook):
         is_path = isinstance(local_full_path_or_buffer, str)
 
         if is_path:
-            input_handle = open(local_full_path_or_buffer, 'rb')
+            input_handle = open(local_full_path_or_buffer, "rb")
         else:
             input_handle = local_full_path_or_buffer
         remote_path, remote_file_name = os.path.split(remote_full_path)
         conn.cwd(remote_path)
-        conn.storbinary(f'STOR {remote_file_name}', input_handle, block_size)
+        conn.storbinary(f"STOR {remote_file_name}", input_handle, block_size)
 
         if is_path:
             input_handle.close()
@@ -244,22 +244,22 @@ class FTPHook(BaseHook):
 
     def get_mod_time(self, path: str) -> datetime.datetime:
         """
-        Returns a datetime object representing the last time the file was modified
+        Returns a datetime object representing the last time the file was modified.
 
         :param path: remote file path
         """
         conn = self.get_conn()
-        ftp_mdtm = conn.sendcmd('MDTM ' + path)
+        ftp_mdtm = conn.sendcmd("MDTM " + path)
         time_val = ftp_mdtm[4:]
         # time_val optionally has microseconds
         try:
             return datetime.datetime.strptime(time_val, "%Y%m%d%H%M%S.%f")
         except ValueError:
-            return datetime.datetime.strptime(time_val, '%Y%m%d%H%M%S')
+            return datetime.datetime.strptime(time_val, "%Y%m%d%H%M%S")
 
-    def get_size(self, path: str) -> Optional[int]:
+    def get_size(self, path: str) -> int | None:
         """
-        Returns the size of a file (in bytes)
+        Returns the size of a file (in bytes).
 
         :param path: remote file path
         """
@@ -267,8 +267,8 @@ class FTPHook(BaseHook):
         size = conn.size(path)
         return int(size) if size else None
 
-    def test_connection(self) -> Tuple[bool, str]:
-        """Test the FTP connection by calling path with directory"""
+    def test_connection(self) -> tuple[bool, str]:
+        """Test the FTP connection by calling path with directory."""
         try:
             conn = self.get_conn()
             conn.pwd

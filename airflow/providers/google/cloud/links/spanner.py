@@ -16,7 +16,9 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google Spanner links."""
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
 from airflow.providers.google.cloud.links.base import BaseGoogleLink
@@ -24,7 +26,7 @@ from airflow.providers.google.cloud.links.base import BaseGoogleLink
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
-SPANNER_BASE_LINK = "https://console.cloud.google.com/spanner/instances"
+SPANNER_BASE_LINK = "/spanner/instances"
 SPANNER_INSTANCE_LINK = SPANNER_BASE_LINK + "/{instance_id}/details/databases?project={project_id}"
 SPANNER_DATABASE_LINK = (
     SPANNER_BASE_LINK + "/{instance_id}/databases/{database_id}/details/tables?project={project_id}"
@@ -32,7 +34,7 @@ SPANNER_DATABASE_LINK = (
 
 
 class SpannerInstanceLink(BaseGoogleLink):
-    """Helper class for constructing Spanner Instance Link"""
+    """Helper class for constructing Spanner Instance Link."""
 
     name = "Spanner Instance"
     key = "spanner_instance"
@@ -40,10 +42,10 @@ class SpannerInstanceLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance: BaseOperator,
         instance_id: str,
-        project_id: Optional[str],
+        project_id: str | None,
     ):
         task_instance.xcom_push(
             context,
@@ -53,7 +55,7 @@ class SpannerInstanceLink(BaseGoogleLink):
 
 
 class SpannerDatabaseLink(BaseGoogleLink):
-    """Helper class for constructing Spanner Database Link"""
+    """Helper class for constructing Spanner Database Link."""
 
     name = "Spanner Database"
     key = "spanner_database"
@@ -61,11 +63,11 @@ class SpannerDatabaseLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance: BaseOperator,
         instance_id: str,
         database_id: str,
-        project_id: Optional[str],
+        project_id: str | None,
     ):
         task_instance.xcom_push(
             context,

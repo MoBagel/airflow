@@ -15,8 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-import unittest
 from unittest import mock
 
 import pytest
@@ -28,11 +28,11 @@ SUCCEEDED = "Succeeded"
 IN_PROGRESS = "InProgress"
 
 
-class TestAmazonGlacierSensor(unittest.TestCase):
-    def setUp(self):
+class TestAmazonGlacierSensor:
+    def setup_method(self):
         self.op = GlacierJobOperationSensor(
-            task_id='test_athena_sensor',
-            aws_conn_id='aws_default',
+            task_id="test_athena_sensor",
+            aws_conn_id="aws_default",
             vault_name="airflow",
             job_id="1a2b3c4d",
             poke_interval=60 * 20,
@@ -59,10 +59,10 @@ class TestAmazonGlacierSensor(unittest.TestCase):
     def test_poke_fail(self, _):
         with pytest.raises(AirflowException) as ctx:
             self.op.poke(None)
-        assert 'Sensor failed' in str(ctx.value)
+        assert "Sensor failed" in str(ctx.value)
 
 
-class TestSensorJobDescription(unittest.TestCase):
+class TestSensorJobDescription:
     def test_job_status_success(self):
         assert JobStatus.SUCCEEDED.value == SUCCEEDED
 

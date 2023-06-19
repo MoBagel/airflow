@@ -16,7 +16,9 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google Cloud Tasks links."""
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
 from airflow.providers.google.cloud.links.base import BaseGoogleLink
@@ -24,23 +26,24 @@ from airflow.providers.google.cloud.links.base import BaseGoogleLink
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
-CLOUD_TASKS_BASE_LINK = "https://pantheon.corp.google.com/cloudtasks"
+CLOUD_TASKS_BASE_LINK = "/cloudtasks"
 CLOUD_TASKS_QUEUE_LINK = CLOUD_TASKS_BASE_LINK + "/queue/{location}/{queue_id}/tasks?project={project_id}"
 CLOUD_TASKS_LINK = CLOUD_TASKS_BASE_LINK + "?project={project_id}"
 
 
 class CloudTasksQueueLink(BaseGoogleLink):
-    """Helper class for constructing Cloud Task Queue Link"""
+    """Helper class for constructing Cloud Task Queue Link."""
 
     name = "Cloud Tasks Queue"
     key = "cloud_task_queue"
     format_str = CLOUD_TASKS_QUEUE_LINK
 
     @staticmethod
-    def extract_parts(queue_name: Optional[str]):
+    def extract_parts(queue_name: str | None):
         """
-        Extract project_id, location and queue id from queue name:
-        projects/PROJECT_ID/locations/LOCATION_ID/queues/QUEUE_ID
+        Extract project_id, location and queue id from queue name.
+
+        projects/PROJECT_ID/locations/LOCATION_ID/queues/QUEUE_ID.
         """
         if not queue_name:
             return "", "", ""
@@ -50,8 +53,8 @@ class CloudTasksQueueLink(BaseGoogleLink):
     @staticmethod
     def persist(
         operator_instance: BaseOperator,
-        context: "Context",
-        queue_name: Optional[str],
+        context: Context,
+        queue_name: str | None,
     ):
         project_id, location, queue_id = CloudTasksQueueLink.extract_parts(queue_name)
         operator_instance.xcom_push(
@@ -62,7 +65,7 @@ class CloudTasksQueueLink(BaseGoogleLink):
 
 
 class CloudTasksLink(BaseGoogleLink):
-    """Helper class for constructing Cloud Task Link"""
+    """Helper class for constructing Cloud Task Link."""
 
     name = "Cloud Tasks"
     key = "cloud_task"
@@ -71,8 +74,8 @@ class CloudTasksLink(BaseGoogleLink):
     @staticmethod
     def persist(
         operator_instance: BaseOperator,
-        context: "Context",
-        project_id: Optional[str],
+        context: Context,
+        project_id: str | None,
     ):
         operator_instance.xcom_push(
             context,

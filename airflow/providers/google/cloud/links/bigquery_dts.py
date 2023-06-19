@@ -16,6 +16,8 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google BigQuery Data Transfer links."""
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
@@ -24,12 +26,12 @@ from airflow.providers.google.cloud.links.base import BaseGoogleLink
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
-BIGQUERY_BASE_LINK = "https://console.cloud.google.com/bigquery/transfers"
+BIGQUERY_BASE_LINK = "/bigquery/transfers"
 BIGQUERY_DTS_LINK = BIGQUERY_BASE_LINK + "/locations/{region}/configs/{config_id}/runs?project={project_id}"
 
 
 class BigQueryDataTransferConfigLink(BaseGoogleLink):
-    """Helper class for constructing BigQuery Data Transfer Config Link"""
+    """Helper class for constructing BigQuery Data Transfer Config Link."""
 
     name = "BigQuery Data Transfer Config"
     key = "bigquery_dts_config"
@@ -37,7 +39,7 @@ class BigQueryDataTransferConfigLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance: BaseOperator,
         region: str,
         config_id: str,

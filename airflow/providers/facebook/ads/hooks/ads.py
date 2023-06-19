@@ -15,34 +15,35 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""This module contains Facebook Ads Reporting hooks"""
+"""This module contains Facebook Ads Reporting hooks."""
+from __future__ import annotations
+
 import time
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from functools import cached_property
+from typing import Any
 
 from facebook_business.adobjects.adaccount import AdAccount
 from facebook_business.adobjects.adreportrun import AdReportRun
 from facebook_business.adobjects.adsinsights import AdsInsights
 from facebook_business.api import FacebookAdsApi
 
-from airflow.compat.functools import cached_property
 from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 
 
 class JobStatus(Enum):
-    """Available options for facebook async task status"""
+    """Available options for facebook async task status."""
 
-    COMPLETED = 'Job Completed'
-    STARTED = 'Job Started'
-    RUNNING = 'Job Running'
-    FAILED = 'Job Failed'
-    SKIPPED = 'Job Skipped'
+    COMPLETED = "Job Completed"
+    STARTED = "Job Started"
+    RUNNING = "Job Running"
+    FAILED = "Job Failed"
+    SKIPPED = "Job Skipped"
 
 
 class FacebookAdsReportingHook(BaseHook):
-    """
-    Hook for the Facebook Ads API
+    """Facebook Ads API.
 
     .. seealso::
         For more information on the Facebook Ads API, take a look at the API docs:
@@ -54,15 +55,15 @@ class FacebookAdsReportingHook(BaseHook):
 
     """
 
-    conn_name_attr = 'facebook_conn_id'
-    default_conn_name = 'facebook_default'
-    conn_type = 'facebook_social'
-    hook_name = 'Facebook Ads'
+    conn_name_attr = "facebook_conn_id"
+    default_conn_name = "facebook_default"
+    conn_type = "facebook_social"
+    hook_name = "Facebook Ads"
 
     def __init__(
         self,
         facebook_conn_id: str = default_conn_name,
-        api_version: Optional[str] = None,
+        api_version: str | None = None,
     ) -> None:
         super().__init__()
         self.facebook_conn_id = facebook_conn_id
@@ -70,7 +71,7 @@ class FacebookAdsReportingHook(BaseHook):
         self.client_required_fields = ["app_id", "app_secret", "access_token", "account_id"]
 
     def _get_service(self) -> FacebookAdsApi:
-        """Returns Facebook Ads Client using a service account"""
+        """Returns Facebook Ads Client using a service account."""
         config = self.facebook_ads_config
         return FacebookAdsApi.init(
             app_id=config["app_id"],
@@ -81,14 +82,15 @@ class FacebookAdsReportingHook(BaseHook):
 
     @cached_property
     def multiple_accounts(self) -> bool:
-        """Checks whether provided account_id in the Facebook Ads Connection is provided as a list"""
+        """Checks whether provided account_id in the Facebook Ads Connection is provided as a list."""
         return isinstance(self.facebook_ads_config["account_id"], list)
 
     @cached_property
-    def facebook_ads_config(self) -> Dict:
-        """
-        Gets Facebook ads connection from meta db and sets
-        facebook_ads_config attribute with returned config file
+    def facebook_ads_config(self) -> dict:
+        """Get the ``facebook_ads_config`` attribute.
+
+        This fetches Facebook Ads connection from meta database, and sets the
+        ``facebook_ads_config`` attribute with returned config file.
         """
         self.log.info("Fetching fb connection: %s", self.facebook_conn_id)
         conn = self.get_connection(self.facebook_conn_id)
@@ -101,11 +103,11 @@ class FacebookAdsReportingHook(BaseHook):
 
     def bulk_facebook_report(
         self,
-        params: Optional[Dict[str, Any]],
-        fields: List[str],
+        params: dict[str, Any] | None,
+        fields: list[str],
         sleep_time: int = 5,
-    ) -> Union[List[AdsInsights], Dict[str, List[AdsInsights]]]:
-        """Pulls data from the Facebook Ads API regarding Account ID with matching return type.
+    ) -> list[AdsInsights] | dict[str, list[AdsInsights]]:
+        """Pull data from Facebook Ads API regarding Account ID with matching return type.
 
         The return type and value depends on the ``account_id`` configuration. If the
         configuration is a str representing a single Account ID, the return value is the
@@ -121,7 +123,6 @@ class FacebookAdsReportingHook(BaseHook):
 
         :return: Facebook Ads API response,
             converted to Facebook Ads Row objects regarding given Account ID type
-        :rtype: List[AdsInsights] or Dict[str, List[AdsInsights]]
         """
         api = self._get_service()
         if self.multiple_accounts:
@@ -147,15 +148,14 @@ class FacebookAdsReportingHook(BaseHook):
         self,
         account_id: str,
         api: FacebookAdsApi,
-        params: Optional[Dict[str, Any]],
-        fields: List[str],
+        params: dict[str, Any] | None,
+        fields: list[str],
         sleep_time: int = 5,
-    ) -> List[AdsInsights]:
-        """
-        Pulls data from the Facebook Ads API with given account_id
+    ) -> list[AdsInsights]:
+        """Pull data from the Facebook Ads API with given ``account_id``.
 
         :param account_id: Facebook Account ID that holds ads information
-                https://developers.facebook.com/docs/marketing-api/reference/ads-insights/
+            https://developers.facebook.com/docs/marketing-api/reference/ads-insights/
         :param api: FacebookAdsApi created in the hook
         :param fields: List of fields that is obtained from Facebook. Found in AdsInsights.Field class.
             https://developers.facebook.com/docs/marketing-api/insights/parameters/v6.0

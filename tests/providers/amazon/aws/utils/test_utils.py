@@ -14,18 +14,38 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 from datetime import datetime
 
+import pytz
+
 from airflow.providers.amazon.aws.utils import (
+    _StringCompareEnum,
     datetime_to_epoch,
     datetime_to_epoch_ms,
     datetime_to_epoch_us,
     get_airflow_version,
+    trim_none_values,
 )
 
-DT = datetime(2000, 1, 1)
+DT = datetime(2000, 1, 1, tzinfo=pytz.UTC)
 EPOCH = 946_684_800
+
+
+class EnumTest(_StringCompareEnum):
+    FOO = "FOO"
+
+
+def test_trim_none_values():
+    input_object = {
+        "test": "test",
+        "empty": None,
+    }
+    expected_output_object = {
+        "test": "test",
+    }
+    assert trim_none_values(input_object) == expected_output_object
 
 
 def test_datetime_to_epoch():
@@ -42,3 +62,8 @@ def test_datetime_to_epoch_us():
 
 def test_get_airflow_version():
     assert len(get_airflow_version()) == 3
+
+
+def test_str_enum():
+    assert EnumTest.FOO == "FOO"
+    assert EnumTest.FOO.value == "FOO"

@@ -14,12 +14,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import hashlib
+from __future__ import annotations
+
 import json
 import re
 import uuid
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Dict, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Sequence
 
 import pytz
 from google.api_core.exceptions import AlreadyExists
@@ -29,19 +30,24 @@ from google.cloud.workflows.executions_v1beta import Execution
 from google.cloud.workflows_v1beta import Workflow
 from google.protobuf.field_mask_pb2 import FieldMask
 
-from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.workflows import WorkflowsHook
 from airflow.providers.google.cloud.links.workflows import (
     WorkflowsExecutionLink,
     WorkflowsListOfWorkflowsLink,
     WorkflowsWorkflowDetailsLink,
 )
+from airflow.providers.google.cloud.operators.cloud_base import GoogleCloudBaseOperator
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
+try:
+    from airflow.utils.hashlib_wrapper import md5
+except ModuleNotFoundError:
+    # Remove when Airflow providers min Airflow version is "2.7.0"
+    from hashlib import md5
 
 
-class WorkflowsCreateWorkflowOperator(BaseOperator):
+class WorkflowsCreateWorkflowOperator(GoogleCloudBaseOperator):
     """
     Creates a new workflow. If a workflow with the specified name
     already exists in the specified project and location, the long
@@ -70,16 +76,16 @@ class WorkflowsCreateWorkflowOperator(BaseOperator):
     def __init__(
         self,
         *,
-        workflow: Dict,
+        workflow: dict,
         workflow_id: str,
         location: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
         force_rerun: bool = False,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -108,12 +114,12 @@ class WorkflowsCreateWorkflowOperator(BaseOperator):
 
         # We are limited by allowed length of workflow_id so
         # we use hash of whole information
-        exec_date = context['execution_date'].isoformat()
+        exec_date = context["execution_date"].isoformat()
         base = f"airflow_{self.dag_id}_{self.task_id}_{exec_date}_{hash_base}"
-        workflow_id = hashlib.md5(base.encode()).hexdigest()
+        workflow_id = md5(base.encode()).hexdigest()
         return re.sub(r"[:\-+.]", "_", workflow_id)
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         workflow_id = self._workflow_id(context)
 
@@ -150,7 +156,7 @@ class WorkflowsCreateWorkflowOperator(BaseOperator):
         return Workflow.to_dict(workflow)
 
 
-class WorkflowsUpdateWorkflowOperator(BaseOperator):
+class WorkflowsUpdateWorkflowOperator(GoogleCloudBaseOperator):
     """
     Updates an existing workflow.
     Running this method has no impact on already running
@@ -184,13 +190,13 @@ class WorkflowsUpdateWorkflowOperator(BaseOperator):
         *,
         workflow_id: str,
         location: str,
-        project_id: Optional[str] = None,
-        update_mask: Optional[FieldMask] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        update_mask: FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -205,7 +211,7 @@ class WorkflowsUpdateWorkflowOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
 
         workflow = hook.get_workflow(
@@ -237,7 +243,7 @@ class WorkflowsUpdateWorkflowOperator(BaseOperator):
         return Workflow.to_dict(workflow)
 
 
-class WorkflowsDeleteWorkflowOperator(BaseOperator):
+class WorkflowsDeleteWorkflowOperator(GoogleCloudBaseOperator):
     """
     Deletes a workflow with the specified name.
     This method also cancels and deletes all running
@@ -264,12 +270,12 @@ class WorkflowsDeleteWorkflowOperator(BaseOperator):
         *,
         workflow_id: str,
         location: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -283,7 +289,7 @@ class WorkflowsDeleteWorkflowOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         self.log.info("Deleting workflow %s", self.workflow_id)
         operation = hook.delete_workflow(
@@ -297,7 +303,7 @@ class WorkflowsDeleteWorkflowOperator(BaseOperator):
         operation.result()
 
 
-class WorkflowsListWorkflowsOperator(BaseOperator):
+class WorkflowsListWorkflowsOperator(GoogleCloudBaseOperator):
     """
     Lists Workflows in a given project and location.
     The default order is not specified.
@@ -327,14 +333,14 @@ class WorkflowsListWorkflowsOperator(BaseOperator):
         self,
         *,
         location: str,
-        project_id: Optional[str] = None,
-        filter_: Optional[str] = None,
-        order_by: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        filter_: str | None = None,
+        order_by: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -349,7 +355,7 @@ class WorkflowsListWorkflowsOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         self.log.info("Retrieving workflows")
         workflows_iter = hook.list_workflows(
@@ -371,7 +377,7 @@ class WorkflowsListWorkflowsOperator(BaseOperator):
         return [Workflow.to_dict(w) for w in workflows_iter]
 
 
-class WorkflowsGetWorkflowOperator(BaseOperator):
+class WorkflowsGetWorkflowOperator(GoogleCloudBaseOperator):
     """
     Gets details of a single Workflow.
 
@@ -397,12 +403,12 @@ class WorkflowsGetWorkflowOperator(BaseOperator):
         *,
         workflow_id: str,
         location: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -416,7 +422,7 @@ class WorkflowsGetWorkflowOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         self.log.info("Retrieving workflow")
         workflow = hook.get_workflow(
@@ -439,7 +445,7 @@ class WorkflowsGetWorkflowOperator(BaseOperator):
         return Workflow.to_dict(workflow)
 
 
-class WorkflowsCreateExecutionOperator(BaseOperator):
+class WorkflowsCreateExecutionOperator(GoogleCloudBaseOperator):
     """
     Creates a new execution using the latest revision of
     the given workflow.
@@ -467,14 +473,14 @@ class WorkflowsCreateExecutionOperator(BaseOperator):
         self,
         *,
         workflow_id: str,
-        execution: Dict,
+        execution: dict,
         location: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -489,7 +495,7 @@ class WorkflowsCreateExecutionOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         self.log.info("Creating execution")
         execution = hook.create_execution(
@@ -516,7 +522,7 @@ class WorkflowsCreateExecutionOperator(BaseOperator):
         return Execution.to_dict(execution)
 
 
-class WorkflowsCancelExecutionOperator(BaseOperator):
+class WorkflowsCancelExecutionOperator(GoogleCloudBaseOperator):
     """
     Cancels an execution using the given ``workflow_id`` and ``execution_id``.
 
@@ -544,12 +550,12 @@ class WorkflowsCancelExecutionOperator(BaseOperator):
         workflow_id: str,
         execution_id: str,
         location: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -564,7 +570,7 @@ class WorkflowsCancelExecutionOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         self.log.info("Canceling execution %s", self.execution_id)
         execution = hook.cancel_execution(
@@ -589,7 +595,7 @@ class WorkflowsCancelExecutionOperator(BaseOperator):
         return Execution.to_dict(execution)
 
 
-class WorkflowsListExecutionsOperator(BaseOperator):
+class WorkflowsListExecutionsOperator(GoogleCloudBaseOperator):
     """
     Returns a list of executions which belong to the
     workflow with the given name. The method returns
@@ -621,13 +627,13 @@ class WorkflowsListExecutionsOperator(BaseOperator):
         *,
         workflow_id: str,
         location: str,
-        start_date_filter: Optional[datetime] = None,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        start_date_filter: datetime | None = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -642,7 +648,7 @@ class WorkflowsListExecutionsOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         self.log.info("Retrieving executions for workflow %s", self.workflow_id)
         execution_iter = hook.list_executions(
@@ -662,10 +668,14 @@ class WorkflowsListExecutionsOperator(BaseOperator):
             project_id=self.project_id or hook.project_id,
         )
 
-        return [Execution.to_dict(e) for e in execution_iter if e.start_time > self.start_date_filter]
+        return [
+            Execution.to_dict(e)
+            for e in execution_iter
+            if e.start_time.ToDatetime(tzinfo=pytz.UTC) > self.start_date_filter
+        ]
 
 
-class WorkflowsGetExecutionOperator(BaseOperator):
+class WorkflowsGetExecutionOperator(GoogleCloudBaseOperator):
     """
     Returns an execution for the given ``workflow_id`` and ``execution_id``.
 
@@ -693,12 +703,12 @@ class WorkflowsGetExecutionOperator(BaseOperator):
         workflow_id: str,
         execution_id: str,
         location: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
-        metadata: Sequence[Tuple[str, str]] = (),
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
+        metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -713,7 +723,7 @@ class WorkflowsGetExecutionOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = WorkflowsHook(gcp_conn_id=self.gcp_conn_id, impersonation_chain=self.impersonation_chain)
         self.log.info("Retrieving execution %s for workflow %s", self.execution_id, self.workflow_id)
         execution = hook.get_execution(

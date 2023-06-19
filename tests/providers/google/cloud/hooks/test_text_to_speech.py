@@ -15,12 +15,17 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
+from __future__ import annotations
 
-import unittest
 from unittest.mock import patch
 
+import pytest
 from google.api_core.gapic_v1.method import DEFAULT
+from google.cloud.texttospeech_v1.types import (
+    AudioConfig,
+    SynthesisInput,
+    VoiceSelectionParams,
+)
 
 from airflow.providers.google.cloud.hooks.text_to_speech import CloudTextToSpeechHook
 from airflow.providers.google.common.consts import CLIENT_INFO
@@ -31,15 +36,19 @@ VOICE = {"language_code": "en-US", "ssml_gender": "FEMALE"}
 AUDIO_CONFIG = {"audio_encoding": "MP3"}
 
 
-class TestTextToSpeechHook(unittest.TestCase):
-    def setUp(self):
+class TestTextToSpeechHook:
+    def test_delegate_to_runtime_error(self):
+        with pytest.raises(RuntimeError):
+            CloudTextToSpeechHook(gcp_conn_id="GCP_CONN_ID", delegate_to="delegate_to")
+
+    def setup_method(self):
         with patch(
             "airflow.providers.google.common.hooks.base_google.GoogleBaseHook.__init__",
             new=mock_base_gcp_hook_default_project_id,
         ):
             self.gcp_text_to_speech_hook = CloudTextToSpeechHook(gcp_conn_id="test")
 
-    @patch("airflow.providers.google.cloud.hooks.text_to_speech.CloudTextToSpeechHook._get_credentials")
+    @patch("airflow.providers.google.cloud.hooks.text_to_speech.CloudTextToSpeechHook.get_credentials")
     @patch("airflow.providers.google.cloud.hooks.text_to_speech.TextToSpeechClient")
     def test_text_to_speech_client_creation(self, mock_client, mock_get_creds):
         result = self.gcp_text_to_speech_hook.get_conn()
@@ -55,5 +64,9 @@ class TestTextToSpeechHook(unittest.TestCase):
             input_data=INPUT, voice=VOICE, audio_config=AUDIO_CONFIG
         )
         synthesize_method.assert_called_once_with(
-            input_=INPUT, voice=VOICE, audio_config=AUDIO_CONFIG, retry=DEFAULT, timeout=None
+            input=SynthesisInput(INPUT),
+            voice=VoiceSelectionParams(VOICE),
+            audio_config=AudioConfig(AUDIO_CONFIG),
+            retry=DEFAULT,
+            timeout=None,
         )

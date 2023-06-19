@@ -14,9 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Dict, Union
+from typing import TYPE_CHECKING
 
 from google.cloud.container_v1.types import Cluster
 
@@ -25,7 +26,7 @@ from airflow.providers.google.cloud.links.base import BaseGoogleLink
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
-KUBERNETES_BASE_LINK = "https://console.cloud.google.com/kubernetes"
+KUBERNETES_BASE_LINK = "/kubernetes"
 KUBERNETES_CLUSTER_LINK = (
     KUBERNETES_BASE_LINK + "/clusters/details/{location}/{cluster_name}/details?project={project_id}"
 )
@@ -36,14 +37,14 @@ KUBERNETES_POD_LINK = (
 
 
 class KubernetesEngineClusterLink(BaseGoogleLink):
-    """Helper class for constructing Kubernetes Engine Cluster Link"""
+    """Helper class for constructing Kubernetes Engine Cluster Link."""
 
     name = "Kubernetes Cluster"
     key = "kubernetes_cluster_conf"
     format_str = KUBERNETES_CLUSTER_LINK
 
     @staticmethod
-    def persist(context: "Context", task_instance, cluster: Union[Dict, Cluster, None]):
+    def persist(context: Context, task_instance, cluster: dict | Cluster | None):
         if isinstance(cluster, dict):
             cluster = Cluster.from_json(json.dumps(cluster))
 
@@ -59,7 +60,7 @@ class KubernetesEngineClusterLink(BaseGoogleLink):
 
 
 class KubernetesEnginePodLink(BaseGoogleLink):
-    """Helper class for constructing Kubernetes Engine Pod Link"""
+    """Helper class for constructing Kubernetes Engine Pod Link."""
 
     name = "Kubernetes Pod"
     key = "kubernetes_pod_conf"
@@ -67,7 +68,7 @@ class KubernetesEnginePodLink(BaseGoogleLink):
 
     @staticmethod
     def persist(
-        context: "Context",
+        context: Context,
         task_instance,
     ):
         task_instance.xcom_push(

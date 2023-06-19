@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 LOCAL_EXECUTOR = "LocalExecutor"
 LOCAL_KUBERNETES_EXECUTOR = "LocalKubernetesExecutor"
@@ -23,3 +24,4 @@ CELERY_KUBERNETES_EXECUTOR = "CeleryKubernetesExecutor"
 DASK_EXECUTOR = "DaskExecutor"
 KUBERNETES_EXECUTOR = "KubernetesExecutor"
 DEBUG_EXECUTOR = "DebugExecutor"
+MOCK_EXECUTOR = "MockExecutor"

@@ -15,15 +15,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from airflow.jobs.base_job import BaseJob
-from airflow.jobs.triggerer_job import TriggererJob
+from __future__ import annotations
+
+from airflow.jobs.job import Job
 from airflow.models import (
     Connection,
     DagModel,
     DagRun,
     DagTag,
-    DagWarning,
-    Dataset,
     DbCallbackRequest,
     Log,
     Pool,
@@ -37,7 +36,16 @@ from airflow.models import (
     XCom,
     errors,
 )
+from airflow.models.dag import DagOwnerAttributes
 from airflow.models.dagcode import DagCode
+from airflow.models.dagwarning import DagWarning
+from airflow.models.dataset import (
+    DagScheduleDatasetReference,
+    DatasetDagRunQueue,
+    DatasetEvent,
+    DatasetModel,
+    TaskOutletDatasetReference,
+)
 from airflow.models.serialized_dag import SerializedDagModel
 from airflow.security.permissions import RESOURCE_DAG_PREFIX
 from airflow.utils.db import add_default_pool_if_not_exists, create_default_connections, reflect_tables
@@ -47,7 +55,7 @@ from airflow.www.fab_security.sqla.models import Permission, Resource, assoc_per
 
 def clear_db_runs():
     with create_session() as session:
-        session.query(TriggererJob).delete()
+        session.query(Job).delete()
         session.query(Trigger).delete()
         session.query(DagRun).delete()
         session.query(TaskInstance).delete()
@@ -55,12 +63,17 @@ def clear_db_runs():
 
 def clear_db_datasets():
     with create_session() as session:
-        session.query(Dataset).delete()
+        session.query(DatasetEvent).delete()
+        session.query(DatasetModel).delete()
+        session.query(DatasetDagRunQueue).delete()
+        session.query(DagScheduleDatasetReference).delete()
+        session.query(TaskOutletDatasetReference).delete()
 
 
 def clear_db_dags():
     with create_session() as session:
         session.query(DagTag).delete()
+        session.query(DagOwnerAttributes).delete()
         session.query(DagModel).delete()
 
 
@@ -69,7 +82,7 @@ def drop_tables_with_prefix(prefix):
         metadata = reflect_tables(None, session)
         for table_name, table in metadata.tables.items():
             if table_name.startswith(prefix):
-                table.drop()
+                table.drop(session.bind)
 
 
 def clear_db_serialized_dags():
@@ -143,7 +156,7 @@ def clear_db_logs():
 
 def clear_db_jobs():
     with create_session() as session:
-        session.query(BaseJob).delete()
+        session.query(Job).delete()
 
 
 def clear_db_task_fail():
@@ -171,3 +184,25 @@ def clear_dag_specific_permissions():
             synchronize_session=False
         )
         session.query(Resource).filter(Resource.id.in_(dag_resource_ids)).delete(synchronize_session=False)
+
+
+def clear_all():
+    clear_db_runs()
+    clear_db_datasets()
+    clear_db_dags()
+    clear_db_serialized_dags()
+    clear_db_sla_miss()
+    clear_db_dag_code()
+    clear_db_callbacks()
+    clear_rendered_ti_fields()
+    clear_db_import_errors()
+    clear_db_dag_warnings()
+    clear_db_logs()
+    clear_db_jobs()
+    clear_db_task_fail()
+    clear_db_task_reschedule()
+    clear_db_xcom()
+    clear_db_variables()
+    clear_db_pools()
+    clear_db_connections(add_default_connections_back=True)
+    clear_dag_specific_permissions()

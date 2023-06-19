@@ -16,7 +16,12 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains a Apache Beam Hook."""
+from __future__ import annotations
+
+import contextlib
+import copy
 import json
+import logging
 import os
 import select
 import shlex
@@ -24,20 +29,21 @@ import shutil
 import subprocess
 import textwrap
 from tempfile import TemporaryDirectory
-from typing import Callable, List, Optional
+from typing import Callable
+
+from packaging.version import Version
 
 from airflow.exceptions import AirflowConfigException, AirflowException
 from airflow.hooks.base import BaseHook
 from airflow.providers.google.go_module_utils import init_module, install_dependencies
-from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.python_virtualenv import prepare_virtualenv
 
 
 class BeamRunnerType:
     """
     Helper class for listing runner types.
-    For more information about runners see:
-    https://beam.apache.org/documentation/
+
+    For more information about runners see: https://beam.apache.org/documentation/
     """
 
     DataflowRunner = "DataflowRunner"
@@ -50,9 +56,9 @@ class BeamRunnerType:
     Twister2Runner = "Twister2Runner"
 
 
-def beam_options_to_args(options: dict) -> List[str]:
+def beam_options_to_args(options: dict) -> list[str]:
     """
-    Returns a formatted pipeline options from a dictionary of arguments
+    Returns a formatted pipeline options from a dictionary of arguments.
 
     The logic of this method should be compatible with Apache Beam:
     https://github.com/apache/beam/blob/b56740f0e8cd80c2873412847d0b336837429fb9/sdks/python/
@@ -60,12 +66,11 @@ def beam_options_to_args(options: dict) -> List[str]:
 
     :param options: Dictionary with options
     :return: List of arguments
-    :rtype: List[str]
     """
     if not options:
         return []
 
-    args: List[str] = []
+    args: list[str] = []
     for attr, value in options.items():
         if value is None or (isinstance(value, bool) and value):
             args.append(f"--{attr}")
@@ -76,81 +81,85 @@ def beam_options_to_args(options: dict) -> List[str]:
     return args
 
 
-class BeamCommandRunner(LoggingMixin):
+def process_fd(
+    proc,
+    fd,
+    log: logging.Logger,
+    process_line_callback: Callable[[str], None] | None = None,
+):
     """
-    Class responsible for running pipeline command in subprocess
+    Prints output to logs.
+
+    :param proc: subprocess.
+    :param fd: File descriptor.
+    :param process_line_callback: Optional callback which can be used to process
+        stdout and stderr to detect job id.
+    :param log: logger.
+    """
+    if fd not in (proc.stdout, proc.stderr):
+        raise Exception("No data in stderr or in stdout.")
+
+    fd_to_log = {proc.stderr: log.warning, proc.stdout: log.info}
+    func_log = fd_to_log[fd]
+
+    while True:
+        line = fd.readline().decode()
+        if not line:
+            return
+        if process_line_callback:
+            process_line_callback(line)
+        func_log(line.rstrip("\n"))
+
+
+def run_beam_command(
+    cmd: list[str],
+    log: logging.Logger,
+    process_line_callback: Callable[[str], None] | None = None,
+    working_directory: str | None = None,
+) -> None:
+    """
+    Function responsible for running pipeline command in subprocess.
 
     :param cmd: Parts of the command to be run in subprocess
     :param process_line_callback: Optional callback which can be used to process
         stdout and stderr to detect job id
     :param working_directory: Working directory
+    :param log: logger.
     """
+    log.info("Running command: %s", " ".join(shlex.quote(c) for c in cmd))
 
-    def __init__(
-        self,
-        cmd: List[str],
-        process_line_callback: Optional[Callable[[str], None]] = None,
-        working_directory: Optional[str] = None,
-    ) -> None:
-        super().__init__()
-        self.log.info("Running command: %s", " ".join(shlex.quote(c) for c in cmd))
-        self.process_line_callback = process_line_callback
-        self.job_id: Optional[str] = None
+    proc = subprocess.Popen(
+        cmd,
+        cwd=working_directory,
+        shell=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        close_fds=True,
+    )
+    # Waits for Apache Beam pipeline to complete.
+    log.info("Start waiting for Apache Beam process to complete.")
+    reads = [proc.stderr, proc.stdout]
+    while True:
+        # Wait for at least one available fd.
+        readable_fds, _, _ = select.select(reads, [], [], 5)
+        if readable_fds is None:
+            log.info("Waiting for Apache Beam process to complete.")
+            continue
 
-        self._proc = subprocess.Popen(
-            cmd,
-            cwd=working_directory,
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            close_fds=True,
-        )
+        for readable_fd in readable_fds:
+            process_fd(proc, readable_fd, log, process_line_callback)
 
-    def _process_fd(self, fd):
-        """
-        Prints output to logs.
+        if proc.poll() is not None:
+            break
 
-        :param fd: File descriptor.
-        """
-        if fd not in (self._proc.stdout, self._proc.stderr):
-            raise Exception("No data in stderr or in stdout.")
+    # Corner case: check if more output was created between the last read and the process termination
+    for readable_fd in reads:
+        process_fd(proc, readable_fd, log, process_line_callback)
 
-        fd_to_log = {self._proc.stderr: self.log.warning, self._proc.stdout: self.log.info}
-        func_log = fd_to_log[fd]
+    log.info("Process exited with return code: %s", proc.returncode)
 
-        while True:
-            line = fd.readline().decode()
-            if not line:
-                return
-            if self.process_line_callback:
-                self.process_line_callback(line)
-            func_log(line.rstrip("\n"))
-
-    def wait_for_done(self) -> None:
-        """Waits for Apache Beam pipeline to complete."""
-        self.log.info("Start waiting for Apache Beam process to complete.")
-        reads = [self._proc.stderr, self._proc.stdout]
-        while True:
-            # Wait for at least one available fd.
-            readable_fds, _, _ = select.select(reads, [], [], 5)
-            if readable_fds is None:
-                self.log.info("Waiting for Apache Beam process to complete.")
-                continue
-
-            for readable_fd in readable_fds:
-                self._process_fd(readable_fd)
-
-            if self._proc.poll() is not None:
-                break
-
-        # Corner case: check if more output was created between the last read and the process termination
-        for readable_fd in reads:
-            self._process_fd(readable_fd)
-
-        self.log.info("Process exited with return code: %s", self._proc.returncode)
-
-        if self._proc.returncode != 0:
-            raise AirflowException(f"Apache Beam process failed with return code {self._proc.returncode}")
+    if proc.returncode != 0:
+        raise AirflowException(f"Apache Beam process failed with return code {proc.returncode}")
 
 
 class BeamHook(BaseHook):
@@ -173,31 +182,31 @@ class BeamHook(BaseHook):
     def _start_pipeline(
         self,
         variables: dict,
-        command_prefix: List[str],
-        process_line_callback: Optional[Callable[[str], None]] = None,
-        working_directory: Optional[str] = None,
+        command_prefix: list[str],
+        process_line_callback: Callable[[str], None] | None = None,
+        working_directory: str | None = None,
     ) -> None:
         cmd = command_prefix + [
             f"--runner={self.runner}",
         ]
         if variables:
             cmd.extend(beam_options_to_args(variables))
-        cmd_runner = BeamCommandRunner(
+        run_beam_command(
             cmd=cmd,
             process_line_callback=process_line_callback,
             working_directory=working_directory,
+            log=self.log,
         )
-        cmd_runner.wait_for_done()
 
     def start_python_pipeline(
         self,
         variables: dict,
         py_file: str,
-        py_options: List[str],
+        py_options: list[str],
         py_interpreter: str = "python3",
-        py_requirements: Optional[List[str]] = None,
+        py_requirements: list[str] | None = None,
         py_system_site_packages: bool = False,
-        process_line_callback: Optional[Callable[[str], None]] = None,
+        process_line_callback: Callable[[str], None] | None = None,
     ):
         """
         Starts Apache Beam python pipeline.
@@ -225,37 +234,47 @@ class BeamHook(BaseHook):
         if "labels" in variables:
             variables["labels"] = [f"{key}={value}" for key, value in variables["labels"].items()]
 
-        if py_requirements is not None:
-            if not py_requirements and not py_system_site_packages:
-                warning_invalid_environment = textwrap.dedent(
-                    """\
-                    Invalid method invocation. You have disabled inclusion of system packages and empty list
-                    required for installation, so it is not possible to create a valid virtual environment.
-                    In the virtual environment, apache-beam package must be installed for your job to be \
-                    executed. To fix this problem:
-                    * install apache-beam on the system, then set parameter py_system_site_packages to True,
-                    * add apache-beam to the list of required packages in parameter py_requirements.
-                    """
-                )
-                raise AirflowException(warning_invalid_environment)
+        with contextlib.ExitStack() as exit_stack:
+            if py_requirements is not None:
+                if not py_requirements and not py_system_site_packages:
+                    warning_invalid_environment = textwrap.dedent(
+                        """\
+                        Invalid method invocation. You have disabled inclusion of system packages and empty
+                        list required for installation, so it is not possible to create a valid virtual
+                        environment. In the virtual environment, apache-beam package must be installed for
+                        your job to be executed.
 
-            with TemporaryDirectory(prefix="apache-beam-venv") as tmp_dir:
+                        To fix this problem:
+                        * install apache-beam on the system, then set parameter py_system_site_packages
+                          to True,
+                        * add apache-beam to the list of required packages in parameter py_requirements.
+                        """
+                    )
+                    raise AirflowException(warning_invalid_environment)
+                tmp_dir = exit_stack.enter_context(TemporaryDirectory(prefix="apache-beam-venv"))
                 py_interpreter = prepare_virtualenv(
                     venv_directory=tmp_dir,
                     python_bin=py_interpreter,
                     system_site_packages=py_system_site_packages,
                     requirements=py_requirements,
                 )
-                command_prefix = [py_interpreter] + py_options + [py_file]
 
-                self._start_pipeline(
-                    variables=variables,
-                    command_prefix=command_prefix,
-                    process_line_callback=process_line_callback,
-                )
-        else:
             command_prefix = [py_interpreter] + py_options + [py_file]
 
+            beam_version = (
+                subprocess.check_output(
+                    [py_interpreter, "-c", "import apache_beam; print(apache_beam.__version__)"]
+                )
+                .decode()
+                .strip()
+            )
+            self.log.info("Beam version: %s", beam_version)
+            impersonate_service_account = variables.get("impersonate_service_account")
+            if impersonate_service_account:
+                if Version(beam_version) < Version("2.39.0") or True:
+                    raise AirflowException(
+                        "The impersonateServiceAccount option requires Apache Beam 2.39.0 or newer."
+                    )
             self._start_pipeline(
                 variables=variables,
                 command_prefix=command_prefix,
@@ -266,8 +285,8 @@ class BeamHook(BaseHook):
         self,
         variables: dict,
         jar: str,
-        job_class: Optional[str] = None,
-        process_line_callback: Optional[Callable[[str], None]] = None,
+        job_class: str | None = None,
+        process_line_callback: Callable[[str], None] | None = None,
     ) -> None:
         """
         Starts Apache Beam Java pipeline.
@@ -292,15 +311,14 @@ class BeamHook(BaseHook):
         self,
         variables: dict,
         go_file: str,
-        process_line_callback: Optional[Callable[[str], None]] = None,
+        process_line_callback: Callable[[str], None] | None = None,
         should_init_module: bool = False,
     ) -> None:
         """
-        Starts Apache Beam Go pipeline.
+        Starts Apache Beam Go pipeline with a source file.
 
         :param variables: Variables passed to the job.
         :param go_file: Path to the Go file with your beam pipeline.
-        :param go_file:
         :param process_line_callback: (optional) Callback that can be used to process each line of
             the stdout and stderr file descriptors.
         :param should_init_module: If False (default), will just execute a `go run` command. If True, will
@@ -331,4 +349,35 @@ class BeamHook(BaseHook):
             command_prefix=command_prefix,
             process_line_callback=process_line_callback,
             working_directory=working_directory,
+        )
+
+    def start_go_pipeline_with_binary(
+        self,
+        variables: dict,
+        launcher_binary: str,
+        worker_binary: str,
+        process_line_callback: Callable[[str], None] | None = None,
+    ) -> None:
+        """
+        Starts Apache Beam Go pipeline with an executable binary.
+
+        :param variables: Variables passed to the job.
+        :param launcher_binary: Path to the binary compiled for the launching platform.
+        :param worker_binary: Path to the binary compiled for the worker platform.
+        :param process_line_callback: (optional) Callback that can be used to process each line of
+            the stdout and stderr file descriptors.
+        """
+        job_variables = copy.deepcopy(variables)
+
+        if "labels" in job_variables:
+            job_variables["labels"] = json.dumps(job_variables["labels"], separators=(",", ":"))
+
+        job_variables["worker_binary"] = worker_binary
+
+        command_prefix = [launcher_binary]
+
+        self._start_pipeline(
+            variables=job_variables,
+            command_prefix=command_prefix,
+            process_line_callback=process_line_callback,
         )

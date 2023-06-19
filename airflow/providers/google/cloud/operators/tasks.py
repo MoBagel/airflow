@@ -15,13 +15,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """
 This module contains various Google Cloud Tasks operators
 which allow you to perform basic operations using
 Cloud Tasks queues/tasks.
 """
-from typing import TYPE_CHECKING, Dict, Optional, Sequence, Tuple, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence, Tuple
 
 from google.api_core.exceptions import AlreadyExists
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
@@ -29,9 +30,9 @@ from google.api_core.retry import Retry
 from google.cloud.tasks_v2.types import Queue, Task
 from google.protobuf.field_mask_pb2 import FieldMask
 
-from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.tasks import CloudTasksHook
 from airflow.providers.google.cloud.links.cloud_tasks import CloudTasksLink, CloudTasksQueueLink
+from airflow.providers.google.cloud.operators.cloud_base import GoogleCloudBaseOperator
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 MetaData = Sequence[Tuple[str, str]]
 
 
-class CloudTasksQueueCreateOperator(BaseOperator):
+class CloudTasksQueueCreateOperator(GoogleCloudBaseOperator):
     """
     Creates a queue in Cloud Tasks.
 
@@ -72,7 +73,6 @@ class CloudTasksQueueCreateOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: google.cloud.tasks_v2.types.Queue
     """
 
     template_fields: Sequence[str] = (
@@ -90,13 +90,13 @@ class CloudTasksQueueCreateOperator(BaseOperator):
         *,
         location: str,
         task_queue: Queue,
-        project_id: Optional[str] = None,
-        queue_name: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        queue_name: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -110,7 +110,7 @@ class CloudTasksQueueCreateOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -144,7 +144,7 @@ class CloudTasksQueueCreateOperator(BaseOperator):
         return Queue.to_dict(queue)
 
 
-class CloudTasksQueueUpdateOperator(BaseOperator):
+class CloudTasksQueueUpdateOperator(GoogleCloudBaseOperator):
     """
     Updates a queue in Cloud Tasks.
 
@@ -180,7 +180,6 @@ class CloudTasksQueueUpdateOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: google.cloud.tasks_v2.types.Queue
     """
 
     template_fields: Sequence[str] = (
@@ -198,15 +197,15 @@ class CloudTasksQueueUpdateOperator(BaseOperator):
         self,
         *,
         task_queue: Queue,
-        project_id: Optional[str] = None,
-        location: Optional[str] = None,
-        queue_name: Optional[str] = None,
-        update_mask: Optional[FieldMask] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        location: str | None = None,
+        queue_name: str | None = None,
+        update_mask: FieldMask | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -221,7 +220,7 @@ class CloudTasksQueueUpdateOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -244,7 +243,7 @@ class CloudTasksQueueUpdateOperator(BaseOperator):
         return Queue.to_dict(queue)
 
 
-class CloudTasksQueueGetOperator(BaseOperator):
+class CloudTasksQueueGetOperator(GoogleCloudBaseOperator):
     """
     Gets a queue from Cloud Tasks.
 
@@ -272,7 +271,6 @@ class CloudTasksQueueGetOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: google.cloud.tasks_v2.types.Queue
     """
 
     template_fields: Sequence[str] = (
@@ -289,12 +287,12 @@ class CloudTasksQueueGetOperator(BaseOperator):
         *,
         location: str,
         queue_name: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -307,7 +305,7 @@ class CloudTasksQueueGetOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -328,7 +326,7 @@ class CloudTasksQueueGetOperator(BaseOperator):
         return Queue.to_dict(queue)
 
 
-class CloudTasksQueuesListOperator(BaseOperator):
+class CloudTasksQueuesListOperator(GoogleCloudBaseOperator):
     """
     Lists queues from Cloud Tasks.
 
@@ -358,7 +356,6 @@ class CloudTasksQueuesListOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: list[google.cloud.tasks_v2.types.Queue]
     """
 
     template_fields: Sequence[str] = (
@@ -373,14 +370,14 @@ class CloudTasksQueuesListOperator(BaseOperator):
         self,
         *,
         location: str,
-        project_id: Optional[str] = None,
-        results_filter: Optional[str] = None,
-        page_size: Optional[int] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        results_filter: str | None = None,
+        page_size: int | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -394,7 +391,7 @@ class CloudTasksQueuesListOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -416,7 +413,7 @@ class CloudTasksQueuesListOperator(BaseOperator):
         return [Queue.to_dict(q) for q in queues]
 
 
-class CloudTasksQueueDeleteOperator(BaseOperator):
+class CloudTasksQueueDeleteOperator(GoogleCloudBaseOperator):
     """
     Deletes a queue from Cloud Tasks, even if it has tasks in it.
 
@@ -458,12 +455,12 @@ class CloudTasksQueueDeleteOperator(BaseOperator):
         *,
         location: str,
         queue_name: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -476,7 +473,7 @@ class CloudTasksQueueDeleteOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -491,7 +488,7 @@ class CloudTasksQueueDeleteOperator(BaseOperator):
         )
 
 
-class CloudTasksQueuePurgeOperator(BaseOperator):
+class CloudTasksQueuePurgeOperator(GoogleCloudBaseOperator):
     """
     Purges a queue by deleting all of its tasks from Cloud Tasks.
 
@@ -519,7 +516,6 @@ class CloudTasksQueuePurgeOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: list[google.cloud.tasks_v2.types.Queue]
     """
 
     template_fields: Sequence[str] = (
@@ -536,12 +532,12 @@ class CloudTasksQueuePurgeOperator(BaseOperator):
         *,
         location: str,
         queue_name: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -554,7 +550,7 @@ class CloudTasksQueuePurgeOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -575,7 +571,7 @@ class CloudTasksQueuePurgeOperator(BaseOperator):
         return Queue.to_dict(queue)
 
 
-class CloudTasksQueuePauseOperator(BaseOperator):
+class CloudTasksQueuePauseOperator(GoogleCloudBaseOperator):
     """
     Pauses a queue in Cloud Tasks.
 
@@ -603,7 +599,6 @@ class CloudTasksQueuePauseOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: list[google.cloud.tasks_v2.types.Queue]
     """
 
     template_fields: Sequence[str] = (
@@ -620,12 +615,12 @@ class CloudTasksQueuePauseOperator(BaseOperator):
         *,
         location: str,
         queue_name: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -638,7 +633,7 @@ class CloudTasksQueuePauseOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -659,7 +654,7 @@ class CloudTasksQueuePauseOperator(BaseOperator):
         return Queue.to_dict(queue)
 
 
-class CloudTasksQueueResumeOperator(BaseOperator):
+class CloudTasksQueueResumeOperator(GoogleCloudBaseOperator):
     """
     Resumes a queue in Cloud Tasks.
 
@@ -687,7 +682,6 @@ class CloudTasksQueueResumeOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: list[google.cloud.tasks_v2.types.Queue]
     """
 
     template_fields: Sequence[str] = (
@@ -704,12 +698,12 @@ class CloudTasksQueueResumeOperator(BaseOperator):
         *,
         location: str,
         queue_name: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -722,7 +716,7 @@ class CloudTasksQueueResumeOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -743,7 +737,7 @@ class CloudTasksQueueResumeOperator(BaseOperator):
         return Queue.to_dict(queue)
 
 
-class CloudTasksTaskCreateOperator(BaseOperator):
+class CloudTasksTaskCreateOperator(GoogleCloudBaseOperator):
     """
     Creates a task in Cloud Tasks.
 
@@ -777,7 +771,6 @@ class CloudTasksTaskCreateOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: google.cloud.tasks_v2.types.Task
     """
 
     template_fields: Sequence[str] = (
@@ -796,15 +789,15 @@ class CloudTasksTaskCreateOperator(BaseOperator):
         *,
         location: str,
         queue_name: str,
-        task: Union[Dict, Task],
-        project_id: Optional[str] = None,
-        task_name: Optional[str] = None,
-        response_view: Optional[Task.View] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        task: dict | Task,
+        project_id: str | None = None,
+        task_name: str | None = None,
+        response_view: Task.View | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -820,7 +813,7 @@ class CloudTasksTaskCreateOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -844,7 +837,7 @@ class CloudTasksTaskCreateOperator(BaseOperator):
         return Task.to_dict(task)
 
 
-class CloudTasksTaskGetOperator(BaseOperator):
+class CloudTasksTaskGetOperator(GoogleCloudBaseOperator):
     """
     Gets a task from Cloud Tasks.
 
@@ -875,7 +868,6 @@ class CloudTasksTaskGetOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: google.cloud.tasks_v2.types.Task
     """
 
     template_fields: Sequence[str] = (
@@ -894,13 +886,13 @@ class CloudTasksTaskGetOperator(BaseOperator):
         location: str,
         queue_name: str,
         task_name: str,
-        project_id: Optional[str] = None,
-        response_view: Optional[Task.View] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        response_view: Task.View | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -915,7 +907,7 @@ class CloudTasksTaskGetOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -938,7 +930,7 @@ class CloudTasksTaskGetOperator(BaseOperator):
         return Task.to_dict(task)
 
 
-class CloudTasksTasksListOperator(BaseOperator):
+class CloudTasksTasksListOperator(GoogleCloudBaseOperator):
     """
     Lists the tasks in Cloud Tasks.
 
@@ -970,7 +962,6 @@ class CloudTasksTasksListOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: list[google.cloud.tasks_v2.types.Task]
     """
 
     template_fields: Sequence[str] = (
@@ -987,14 +978,14 @@ class CloudTasksTasksListOperator(BaseOperator):
         *,
         location: str,
         queue_name: str,
-        project_id: Optional[str] = None,
-        response_view: Optional[Task.View] = None,
-        page_size: Optional[int] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        response_view: Task.View | None = None,
+        page_size: int | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -1009,7 +1000,7 @@ class CloudTasksTasksListOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -1033,7 +1024,7 @@ class CloudTasksTasksListOperator(BaseOperator):
         return [Task.to_dict(t) for t in tasks]
 
 
-class CloudTasksTaskDeleteOperator(BaseOperator):
+class CloudTasksTaskDeleteOperator(GoogleCloudBaseOperator):
     """
     Deletes a task from Cloud Tasks.
 
@@ -1078,12 +1069,12 @@ class CloudTasksTaskDeleteOperator(BaseOperator):
         location: str,
         queue_name: str,
         task_name: str,
-        project_id: Optional[str] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -1097,7 +1088,7 @@ class CloudTasksTaskDeleteOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -1113,7 +1104,7 @@ class CloudTasksTaskDeleteOperator(BaseOperator):
         )
 
 
-class CloudTasksTaskRunOperator(BaseOperator):
+class CloudTasksTaskRunOperator(GoogleCloudBaseOperator):
     """
     Forces to run a task in Cloud Tasks.
 
@@ -1144,7 +1135,6 @@ class CloudTasksTaskRunOperator(BaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
 
-    :rtype: google.cloud.tasks_v2.types.Task
     """
 
     template_fields: Sequence[str] = (
@@ -1163,13 +1153,13 @@ class CloudTasksTaskRunOperator(BaseOperator):
         location: str,
         queue_name: str,
         task_name: str,
-        project_id: Optional[str] = None,
-        response_view: Optional[Task.View] = None,
-        retry: Union[Retry, _MethodDefault] = DEFAULT,
-        timeout: Optional[float] = None,
+        project_id: str | None = None,
+        response_view: Task.View | None = None,
+        retry: Retry | _MethodDefault = DEFAULT,
+        timeout: float | None = None,
         metadata: MetaData = (),
         gcp_conn_id: str = "google_cloud_default",
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -1184,7 +1174,7 @@ class CloudTasksTaskRunOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.impersonation_chain = impersonation_chain
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         hook = CloudTasksHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,

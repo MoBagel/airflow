@@ -15,32 +15,34 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 from contextlib import closing
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
 import pyexasol
-from pyexasol import ExaConnection
+from pyexasol import ExaConnection, ExaStatement
 
-from airflow.providers.common.sql.hooks.sql import DbApiHook
+from airflow.providers.common.sql.hooks.sql import DbApiHook, return_single_query_results
 
 
 class ExasolHook(DbApiHook):
-    """
-    Interact with Exasol.
+    """Interact with Exasol.
+
     You can specify the pyexasol ``compression``, ``encryption``, ``json_lib``
     and ``client_name``  parameters in the extra field of your connection
     as ``{"compression": True, "json_lib": "rapidjson", etc}``.
+
     See `pyexasol reference
     <https://github.com/badoo/pyexasol/blob/master/docs/REFERENCE.md#connect>`_
     for more details.
     """
 
-    conn_name_attr = 'exasol_conn_id'
-    default_conn_name = 'exasol_default'
-    conn_type = 'exasol'
-    hook_name = 'Exasol'
+    conn_name_attr = "exasol_conn_id"
+    default_conn_name = "exasol_default"
+    conn_type = "exasol"
+    hook_name = "Exasol"
     supports_autocommit = True
 
     def __init__(self, *args, **kwargs) -> None:
@@ -51,39 +53,39 @@ class ExasolHook(DbApiHook):
         conn_id = getattr(self, self.conn_name_attr)
         conn = self.get_connection(conn_id)
         conn_args = dict(
-            dsn=f'{conn.host}:{conn.port}',
+            dsn=f"{conn.host}:{conn.port}",
             user=conn.login,
             password=conn.password,
             schema=self.schema or conn.schema,
         )
         # check for parameters in conn.extra
         for arg_name, arg_val in conn.extra_dejson.items():
-            if arg_name in ['compression', 'encryption', 'json_lib', 'client_name']:
+            if arg_name in ["compression", "encryption", "json_lib", "client_name"]:
                 conn_args[arg_name] = arg_val
 
         conn = pyexasol.connect(**conn_args)
         return conn
 
-    def get_pandas_df(
-        self, sql: Union[str, list], parameters: Optional[dict] = None, **kwargs
-    ) -> pd.DataFrame:
-        """
-        Executes the sql and returns a pandas dataframe
+    def get_pandas_df(self, sql: str, parameters: dict | None = None, **kwargs) -> pd.DataFrame:
+        """Execute the SQL and return a Pandas dataframe.
 
-        :param sql: the sql statement to be executed (str) or a list of
-            sql statements to execute
+        :param sql: The sql statement to be executed (str) or a list of
+            sql statements to execute.
         :param parameters: The parameters to render the SQL query with.
-        :param kwargs: (optional) passed into pyexasol.ExaConnection.export_to_pandas method
+
+        Other keyword arguments are all forwarded into
+        ``pyexasol.ExaConnection.export_to_pandas``.
         """
         with closing(self.get_conn()) as conn:
             df = conn.export_to_pandas(sql, query_params=parameters, **kwargs)
             return df
 
     def get_records(
-        self, sql: Union[str, list], parameters: Optional[dict] = None
-    ) -> List[Union[dict, Tuple[Any, ...]]]:
-        """
-        Executes the sql and returns a set of records.
+        self,
+        sql: str | list[str],
+        parameters: Iterable | Mapping | None = None,
+    ) -> list[dict | tuple[Any, ...]]:
+        """Execute the SQL and return a set of records.
 
         :param sql: the sql statement to be executed (str) or a list of
             sql statements to execute
@@ -93,9 +95,8 @@ class ExasolHook(DbApiHook):
             with closing(conn.execute(sql, parameters)) as cur:
                 return cur.fetchall()
 
-    def get_first(self, sql: Union[str, list], parameters: Optional[dict] = None) -> Optional[Any]:
-        """
-        Executes the sql and returns the first resulting row.
+    def get_first(self, sql: str | list[str], parameters: Iterable | Mapping | None = None) -> Any:
+        """Execute the SQL and return the first resulting row.
 
         :param sql: the sql statement to be executed (str) or a list of
             sql statements to execute
@@ -109,11 +110,10 @@ class ExasolHook(DbApiHook):
         self,
         filename: str,
         query_or_table: str,
-        query_params: Optional[Dict] = None,
-        export_params: Optional[Dict] = None,
+        query_params: dict | None = None,
+        export_params: dict | None = None,
     ) -> None:
-        """
-        Exports data to a file.
+        """Export data to a file.
 
         :param filename: Path to the file to which the data has to be exported
         :param query_or_table: the sql statement to be executed or table name to export
@@ -132,13 +132,44 @@ class ExasolHook(DbApiHook):
             )
         self.log.info("Data saved to %s", filename)
 
-    def run(
-        self, sql: Union[str, list], autocommit: bool = False, parameters: Optional[dict] = None, handler=None
-    ) -> Optional[list]:
+    @staticmethod
+    def get_description(statement: ExaStatement) -> Sequence[Sequence]:
+        """Copied implementation from DB2-API wrapper.
+
+        For more info, see
+        https://github.com/exasol/pyexasol/blob/master/docs/DBAPI_COMPAT.md#db-api-20-wrapper
+
+        :param statement: Exasol statement
+        :return: description sequence of t
         """
-        Runs a command or a list of commands. Pass a list of sql
-        statements to the sql parameter to get them to execute
-        sequentially
+        cols = []
+        for k, v in statement.columns().items():
+            cols.append(
+                (
+                    k,
+                    v.get("type", None),
+                    v.get("size", None),
+                    v.get("size", None),
+                    v.get("precision", None),
+                    v.get("scale", None),
+                    True,
+                )
+            )
+        return cols
+
+    def run(
+        self,
+        sql: str | Iterable[str],
+        autocommit: bool = False,
+        parameters: Iterable | Mapping | None = None,
+        handler: Callable | None = None,
+        split_statements: bool = False,
+        return_last: bool = True,
+    ) -> Any | list[Any] | None:
+        """Run a command or a list of commands.
+
+        Pass a list of SQL statements to the SQL parameter to get them to
+        execute sequentially.
 
         :param sql: the sql statement to be executed (str) or a list of
             sql statements to execute
@@ -146,42 +177,55 @@ class ExasolHook(DbApiHook):
             before executing the query.
         :param parameters: The parameters to render the SQL query with.
         :param handler: The result handler which is called with the result of each statement.
+        :param split_statements: Whether to split a single SQL string into statements and run separately
+        :param return_last: Whether to return result for only last statement or for all after split
+        :return: return only result of the LAST SQL expression if handler was provided.
         """
+        self.descriptions = []
         if isinstance(sql, str):
-            sql = [sql]
+            if split_statements:
+                sql_list: Iterable[str] = self.split_sql_string(sql)
+            else:
+                statement = self.strip_sql_string(sql)
+                sql_list = [statement] if statement.strip() else []
+        else:
+            sql_list = sql
 
-        if sql:
-            self.log.debug("Executing %d statements against Exasol DB", len(sql))
+        if sql_list:
+            self.log.debug("Executing following statements against Exasol DB: %s", list(sql_list))
         else:
             raise ValueError("List of SQL statements is empty")
-
+        _last_result = None
         with closing(self.get_conn()) as conn:
-            if self.supports_autocommit:
-                self.set_autocommit(conn, autocommit)
-
-            for query in sql:
-                self.log.info(query)
-                with closing(conn.execute(query, parameters)) as cur:
-                    results = []
-
+            self.set_autocommit(conn, autocommit)
+            results = []
+            for sql_statement in sql_list:
+                with closing(conn.execute(sql_statement, parameters)) as exa_statement:
+                    self.log.info("Running statement: %s, parameters: %s", sql_statement, parameters)
                     if handler is not None:
-                        cur = handler(cur)
+                        result = handler(exa_statement)
+                        if return_single_query_results(sql, return_last, split_statements):
+                            _last_result = result
+                            _last_columns = self.get_description(exa_statement)
+                        else:
+                            results.append(result)
+                            self.descriptions.append(self.get_description(exa_statement))
+                    self.log.info("Rows affected: %s", exa_statement.rowcount)
 
-                    for row in cur:
-                        self.log.info("Statement execution info - %s", row)
-                        results.append(row)
-
-                    self.log.info(cur.row_count)
-            # If autocommit was set to False for db that supports autocommit,
-            # or if db does not support autocommit, we do a manual commit.
+            # If autocommit was set to False or db does not support autocommit, we do a manual commit.
             if not self.get_autocommit(conn):
                 conn.commit()
 
-        return results
+        if handler is None:
+            return None
+        if return_single_query_results(sql, return_last, split_statements):
+            self.descriptions = [_last_columns]
+            return _last_result
+        else:
+            return results
 
     def set_autocommit(self, conn, autocommit: bool) -> None:
-        """
-        Sets the autocommit flag on the connection
+        """Set the autocommit flag on the connection.
 
         :param conn: Connection to set autocommit setting to.
         :param autocommit: The autocommit setting to set.
@@ -194,30 +238,39 @@ class ExasolHook(DbApiHook):
         conn.set_autocommit(autocommit)
 
     def get_autocommit(self, conn) -> bool:
-        """
-        Get autocommit setting for the provided connection.
-        Return True if autocommit is set.
-        Return False if autocommit is not set or set to False or conn
-        does not support autocommit.
+        """Get autocommit setting for the provided connection.
 
         :param conn: Connection to get autocommit setting from.
-        :return: connection autocommit setting.
-        :rtype: bool
+        :return: connection autocommit setting. True if ``autocommit`` is set
+            to True on the connection. False if it is either not set, set to
+            False, or the connection does not support auto-commit.
         """
-        autocommit = conn.attr.get('autocommit')
+        autocommit = conn.attr.get("autocommit")
         if autocommit is None:
             autocommit = super().get_autocommit(conn)
         return autocommit
 
     @staticmethod
-    def _serialize_cell(cell, conn=None) -> object:
-        """
-        Exasol will adapt all arguments to the execute() method internally,
+    def _serialize_cell(cell, conn=None) -> Any:
+        """Override to disable cell serialization.
+
+        Exasol will adapt all arguments to the ``execute()`` method internally,
         hence we return cell without any conversion.
 
         :param cell: The cell to insert into the table
         :param conn: The database connection
         :return: The cell
-        :rtype: object
         """
         return cell
+
+
+def exasol_fetch_all_handler(statement: ExaStatement) -> list[tuple] | None:
+    if statement.result_type == "resultSet":
+        return statement.fetchall()
+    return None
+
+
+def exasol_fetch_one_handler(statement: ExaStatement) -> list[tuple] | None:
+    if statement.result_type == "resultSet":
+        return statement.fetchone()
+    return None

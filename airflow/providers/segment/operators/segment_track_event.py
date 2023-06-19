@@ -15,7 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import TYPE_CHECKING, Optional, Sequence
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence
 
 from airflow.models import BaseOperator
 from airflow.providers.segment.hooks.segment import SegmentHook
@@ -26,7 +28,7 @@ if TYPE_CHECKING:
 
 class SegmentTrackEventOperator(BaseOperator):
     """
-    Send Track Event to Segment for a specified user_id and event
+    Send Track Event to Segment for a specified user_id and event.
 
     :param user_id: The ID for this user in your database. (templated)
     :param event: The name of the event you're tracking. (templated)
@@ -36,16 +38,16 @@ class SegmentTrackEventOperator(BaseOperator):
         Defaults to False
     """
 
-    template_fields: Sequence[str] = ('user_id', 'event', 'properties')
-    ui_color = '#ffd700'
+    template_fields: Sequence[str] = ("user_id", "event", "properties")
+    ui_color = "#ffd700"
 
     def __init__(
         self,
         *,
         user_id: str,
         event: str,
-        properties: Optional[dict] = None,
-        segment_conn_id: str = 'segment_default',
+        properties: dict | None = None,
+        segment_conn_id: str = "segment_default",
         segment_debug_mode: bool = False,
         **kwargs,
     ) -> None:
@@ -57,11 +59,11 @@ class SegmentTrackEventOperator(BaseOperator):
         self.segment_debug_mode = segment_debug_mode
         self.segment_conn_id = segment_conn_id
 
-    def execute(self, context: 'Context') -> None:
+    def execute(self, context: Context) -> None:
         hook = SegmentHook(segment_conn_id=self.segment_conn_id, segment_debug_mode=self.segment_debug_mode)
 
         self.log.info(
-            'Sending track event (%s) for user id: %s with properties: %s',
+            "Sending track event (%s) for user id: %s with properties: %s",
             self.event,
             self.user_id,
             self.properties,

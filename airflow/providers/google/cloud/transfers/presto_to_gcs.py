@@ -15,7 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import Any, Dict, List, Tuple
+from __future__ import annotations
+
+from typing import Any
 
 from prestodb.client import PrestoResult
 from prestodb.dbapi import Cursor as PrestoCursor
@@ -41,11 +43,11 @@ class _PrestoToGCSPrestoCursorAdapter:
 
     def __init__(self, cursor: PrestoCursor):
         self.cursor: PrestoCursor = cursor
-        self.rows: List[Any] = []
+        self.rows: list[Any] = []
         self.initialized: bool = False
 
     @property
-    def description(self) -> List[Tuple]:
+    def description(self) -> list[tuple]:
         """
         This read-only attribute is a sequence of 7-item sequences.
 
@@ -69,11 +71,11 @@ class _PrestoToGCSPrestoCursorAdapter:
 
     @property
     def rowcount(self) -> int:
-        """The read-only attribute specifies the number of rows"""
+        """The read-only attribute specifies the number of rows."""
         return self.cursor.rowcount
 
     def close(self) -> None:
-        """Close the cursor now"""
+        """Close the cursor now."""
         self.cursor.close()
 
     def execute(self, *args, **kwargs) -> PrestoResult:
@@ -127,21 +129,22 @@ class _PrestoToGCSPrestoCursorAdapter:
     def __next__(self) -> Any:
         """
         Return the next row from the currently executing SQL statement using the same semantics as
-        ``.fetchone()``.  A ``StopIteration`` exception is raised when the result set is exhausted.
-        :return:
+        ``.fetchone()``.
+
+        A ``StopIteration`` exception is raised when the result set is exhausted.
         """
         result = self.fetchone()
         if result is None:
             raise StopIteration()
         return result
 
-    def __iter__(self) -> "_PrestoToGCSPrestoCursorAdapter":
-        """Return self to make cursors compatible to the iteration protocol"""
+    def __iter__(self) -> _PrestoToGCSPrestoCursorAdapter:
+        """Return self to make cursors compatible to the iteration protocol."""
         return self
 
 
 class PrestoToGCSOperator(BaseSQLToGCSOperator):
-    """Copy data from PrestoDB to Google Cloud Storage in JSON or CSV format.
+    """Copy data from PrestoDB to Google Cloud Storage in JSON, CSV or Parquet format.
 
     :param presto_conn_id: Reference to a specific Presto hook.
     """
@@ -186,7 +189,7 @@ class PrestoToGCSOperator(BaseSQLToGCSOperator):
         cursor.execute(self.sql)
         return _PrestoToGCSPrestoCursorAdapter(cursor)
 
-    def field_to_bigquery(self, field) -> Dict[str, str]:
+    def field_to_bigquery(self, field) -> dict[str, str]:
         """Convert presto field type to BigQuery field type."""
         clear_field_type = field[1].upper()
         # remove type argument e.g. DECIMAL(2, 10) => DECIMAL

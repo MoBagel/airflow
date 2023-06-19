@@ -14,19 +14,19 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-import unittest
 from unittest.mock import Mock, patch
 
 from airflow.providers.google.suite.transfers.sql_to_sheets import SQLToGoogleSheetsOperator
 
 
-class TestSQLToGoogleSheets(unittest.TestCase):
+class TestSQLToGoogleSheets:
     """
     Test class for SQLToGoogleSheetsOperator
     """
 
-    def setUp(self):
+    def setup_method(self):
         """
         setup
         """

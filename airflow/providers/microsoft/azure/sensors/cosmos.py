@@ -15,6 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Sequence
 
 from airflow.providers.microsoft.azure.hooks.cosmos import AzureCosmosDBHook
@@ -26,10 +28,9 @@ if TYPE_CHECKING:
 
 class AzureCosmosDocumentSensor(BaseSensorOperator):
     """
-    Checks for the existence of a document which
-    matches the given query in CosmosDB. Example:
+    Checks for the existence of a document which matches the given query in CosmosDB.
 
-    .. code-block::
+    .. code-block:: python
 
         azure_cosmos_sensor = AzureCosmosDocumentSensor(
             database_name="somedatabase_name",
@@ -46,7 +47,7 @@ class AzureCosmosDocumentSensor(BaseSensorOperator):
         :ref:`Azure CosmosDB connection<howto/connection:azure_cosmos>`.
     """
 
-    template_fields: Sequence[str] = ('database_name', 'collection_name', 'document_id')
+    template_fields: Sequence[str] = ("database_name", "collection_name", "document_id")
 
     def __init__(
         self,
@@ -63,7 +64,7 @@ class AzureCosmosDocumentSensor(BaseSensorOperator):
         self.collection_name = collection_name
         self.document_id = document_id
 
-    def poke(self, context: "Context") -> bool:
+    def poke(self, context: Context) -> bool:
         self.log.info("*** Entering poke")
         hook = AzureCosmosDBHook(self.azure_cosmos_conn_id)
         return hook.get_document(self.document_id, self.database_name, self.collection_name) is not None

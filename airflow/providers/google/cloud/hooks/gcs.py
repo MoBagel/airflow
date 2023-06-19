@@ -15,10 +15,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 """This module contains a Google Cloud Storage hook."""
+from __future__ import annotations
+
 import functools
 import gzip as gz
+import json
 import os
 import shutil
 import time
@@ -28,46 +30,52 @@ from functools import partial
 from io import BytesIO
 from os import path
 from tempfile import NamedTemporaryFile
-from typing import (
-    IO,
-    Callable,
-    Generator,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    TypeVar,
-    Union,
-    cast,
-    overload,
-)
-from urllib.parse import urlparse
+from typing import IO, Any, Callable, Generator, Sequence, TypeVar, cast, overload
+from urllib.parse import urlsplit
 
-from google.api_core.exceptions import NotFound
+from aiohttp import ClientSession
+from gcloud.aio.storage import Storage
+from google.api_core.exceptions import GoogleAPICallError, NotFound
+from google.api_core.retry import Retry
 
 # not sure why but mypy complains on missing `storage` but it is clearly there and is importable
 from google.cloud import storage  # type: ignore[attr-defined]
 from google.cloud.exceptions import GoogleCloudError
+from google.cloud.storage.retry import DEFAULT_RETRY
+from requests import Session
 
 from airflow.exceptions import AirflowException
 from airflow.providers.google.cloud.utils.helpers import normalize_directory_path
 from airflow.providers.google.common.consts import CLIENT_INFO
-from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
+from airflow.providers.google.common.hooks.base_google import GoogleBaseAsyncHook, GoogleBaseHook
 from airflow.utils import timezone
 from airflow.version import version
 
-RT = TypeVar('RT')
+try:
+    # Airflow 2.3 doesn't have this yet
+    from airflow.typing_compat import ParamSpec
+except ImportError:
+    try:
+        from typing import ParamSpec  # type: ignore[no-redef, attr-defined]
+    except ImportError:
+        from typing_extensions import ParamSpec
+
+RT = TypeVar("RT")
 T = TypeVar("T", bound=Callable)
+FParams = ParamSpec("FParams")
+
+# GCSHook has a method named 'list' (to junior devs: please don't do this), so
+# we need to create an alias to prevent Mypy being confused.
+List = list
 
 # Use default timeout from google-cloud-storage
 DEFAULT_TIMEOUT = 60
 
 
 def _fallback_object_url_to_object_name_and_bucket_name(
-    object_url_keyword_arg_name='object_url',
-    bucket_name_keyword_arg_name='bucket_name',
-    object_name_keyword_arg_name='object_name',
+    object_url_keyword_arg_name="object_url",
+    bucket_name_keyword_arg_name="bucket_name",
+    object_name_keyword_arg_name="object_name",
 ) -> Callable[[T], T]:
     """
     Decorator factory that convert object URL parameter to object name and bucket name parameter.
@@ -78,9 +86,9 @@ def _fallback_object_url_to_object_name_and_bucket_name(
     :return: Decorator
     """
 
-    def _wrapper(func: T):
+    def _wrapper(func: Callable[FParams, RT]) -> Callable[FParams, RT]:
         @functools.wraps(func)
-        def _inner_wrapper(self: "GCSHook", *args, **kwargs) -> RT:
+        def _inner_wrapper(self, *args, **kwargs) -> RT:
             if args:
                 raise AirflowException(
                     "You must use keyword arguments in this methods rather than positional"
@@ -121,13 +129,13 @@ def _fallback_object_url_to_object_name_and_bucket_name(
 
             return func(self, *args, **kwargs)
 
-        return cast(T, _inner_wrapper)
+        return cast(Callable[FParams, RT], _inner_wrapper)
 
-    return _wrapper
+    return cast(Callable[[T], T], _wrapper)
 
 
 # A fake bucket to use in functions decorated by _fallback_object_url_to_object_name_and_bucket_name.
-# This allows the 'bucket' argument to be of type str instead of Optional[str],
+# This allows the 'bucket' argument to be of type str instead of str | None,
 # making it easier to type hint the function body without dealing with the None
 # case that can never happen at runtime.
 PROVIDE_BUCKET: str = cast(str, None)
@@ -139,17 +147,22 @@ class GCSHook(GoogleBaseHook):
     connection.
     """
 
-    _conn = None  # type: Optional[storage.Client]
+    _conn: storage.Client | None = None
 
     def __init__(
         self,
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
     ) -> None:
+        if kwargs.get("delegate_to") is not None:
+            raise RuntimeError(
+                "The `delegate_to` parameter has been deprecated before and finally removed in this version"
+                " of Google Provider. You MUST convert it to `impersonate_chain`"
+            )
+
         super().__init__(
             gcp_conn_id=gcp_conn_id,
-            delegate_to=delegate_to,
             impersonation_chain=impersonation_chain,
         )
 
@@ -157,7 +170,7 @@ class GCSHook(GoogleBaseHook):
         """Returns a Google Cloud Storage service object."""
         if not self._conn:
             self._conn = storage.Client(
-                credentials=self._get_credentials(), client_info=CLIENT_INFO, project=self.project_id
+                credentials=self.get_credentials(), client_info=CLIENT_INFO, project=self.project_id
             )
 
         return self._conn
@@ -166,8 +179,8 @@ class GCSHook(GoogleBaseHook):
         self,
         source_bucket: str,
         source_object: str,
-        destination_bucket: Optional[str] = None,
-        destination_object: Optional[str] = None,
+        destination_bucket: str | None = None,
+        destination_object: str | None = None,
     ) -> None:
         """
         Copies an object from a bucket to another, with renaming if requested.
@@ -188,11 +201,11 @@ class GCSHook(GoogleBaseHook):
         if source_bucket == destination_bucket and source_object == destination_object:
 
             raise ValueError(
-                f'Either source/destination bucket or source/destination object must be different, '
-                f'not both the same: bucket={source_bucket}, object={source_object}'
+                f"Either source/destination bucket or source/destination object must be different, "
+                f"not both the same: bucket={source_bucket}, object={source_object}"
             )
         if not source_bucket or not source_object:
-            raise ValueError('source_bucket and source_object cannot be empty.')
+            raise ValueError("source_bucket and source_object cannot be empty.")
 
         client = self.get_conn()
         source_bucket = client.bucket(source_bucket)
@@ -203,7 +216,7 @@ class GCSHook(GoogleBaseHook):
         )
 
         self.log.info(
-            'Object %s in bucket %s copied to object %s in bucket %s',
+            "Object %s in bucket %s copied to object %s in bucket %s",
             source_object.name,  # type: ignore[attr-defined]
             source_bucket.name,  # type: ignore[attr-defined]
             destination_object.name,  # type: ignore[union-attr]
@@ -215,7 +228,7 @@ class GCSHook(GoogleBaseHook):
         source_bucket: str,
         source_object: str,
         destination_bucket: str,
-        destination_object: Optional[str] = None,
+        destination_object: str | None = None,
     ) -> None:
         """
         Has the same functionality as copy, except that will work on files
@@ -233,11 +246,11 @@ class GCSHook(GoogleBaseHook):
         destination_object = destination_object or source_object
         if source_bucket == destination_bucket and source_object == destination_object:
             raise ValueError(
-                f'Either source/destination bucket or source/destination object must be different, '
-                f'not both the same: bucket={source_bucket}, object={source_object}'
+                f"Either source/destination bucket or source/destination object must be different, "
+                f"not both the same: bucket={source_bucket}, object={source_object}"
             )
         if not source_bucket or not source_object:
-            raise ValueError('source_bucket and source_object cannot be empty.')
+            raise ValueError("source_bucket and source_object cannot be empty.")
 
         client = self.get_conn()
         source_bucket = client.bucket(source_bucket)
@@ -248,16 +261,16 @@ class GCSHook(GoogleBaseHook):
             blob_name=destination_object
         ).rewrite(source=source_object)
 
-        self.log.info('Total Bytes: %s | Bytes Written: %s', total_bytes, bytes_rewritten)
+        self.log.info("Total Bytes: %s | Bytes Written: %s", total_bytes, bytes_rewritten)
 
         while token is not None:
             token, bytes_rewritten, total_bytes = destination_bucket.blob(  # type: ignore[attr-defined]
                 blob_name=destination_object
             ).rewrite(source=source_object, token=token)
 
-            self.log.info('Total Bytes: %s | Bytes Written: %s', total_bytes, bytes_rewritten)
+            self.log.info("Total Bytes: %s | Bytes Written: %s", total_bytes, bytes_rewritten)
         self.log.info(
-            'Object %s in bucket %s rewritten to object %s in bucket %s',
+            "Object %s in bucket %s rewritten to object %s in bucket %s",
             source_object.name,  # type: ignore[attr-defined]
             source_bucket.name,  # type: ignore[attr-defined]
             destination_object,
@@ -270,9 +283,9 @@ class GCSHook(GoogleBaseHook):
         bucket_name: str,
         object_name: str,
         filename: None = None,
-        chunk_size: Optional[int] = None,
-        timeout: Optional[int] = DEFAULT_TIMEOUT,
-        num_max_attempts: Optional[int] = 1,
+        chunk_size: int | None = None,
+        timeout: int | None = DEFAULT_TIMEOUT,
+        num_max_attempts: int | None = 1,
     ) -> bytes:
         ...
 
@@ -282,9 +295,9 @@ class GCSHook(GoogleBaseHook):
         bucket_name: str,
         object_name: str,
         filename: str,
-        chunk_size: Optional[int] = None,
-        timeout: Optional[int] = DEFAULT_TIMEOUT,
-        num_max_attempts: Optional[int] = 1,
+        chunk_size: int | None = None,
+        timeout: int | None = DEFAULT_TIMEOUT,
+        num_max_attempts: int | None = 1,
     ) -> str:
         ...
 
@@ -292,11 +305,11 @@ class GCSHook(GoogleBaseHook):
         self,
         bucket_name: str,
         object_name: str,
-        filename: Optional[str] = None,
-        chunk_size: Optional[int] = None,
-        timeout: Optional[int] = DEFAULT_TIMEOUT,
-        num_max_attempts: Optional[int] = 1,
-    ) -> Union[str, bytes]:
+        filename: str | None = None,
+        chunk_size: int | None = None,
+        timeout: int | None = DEFAULT_TIMEOUT,
+        num_max_attempts: int | None = 1,
+    ) -> str | bytes:
         """
         Downloads a file from Google Cloud Storage.
 
@@ -326,7 +339,7 @@ class GCSHook(GoogleBaseHook):
 
                 if filename:
                     blob.download_to_filename(filename, timeout=timeout)
-                    self.log.info('File downloaded to %s', filename)
+                    self.log.info("File downloaded to %s", filename)
                     return filename
                 else:
                     return blob.download_as_bytes()
@@ -334,9 +347,9 @@ class GCSHook(GoogleBaseHook):
             except GoogleCloudError:
                 if num_file_attempts == num_max_attempts:
                     self.log.error(
-                        'Download attempt of object: %s from %s has failed. Attempt: %s, max %s.',
+                        "Download attempt of object: %s from %s has failed. Attempt: %s, max %s.",
                         object_name,
-                        object_name,
+                        bucket_name,
                         num_file_attempts,
                         num_max_attempts,
                     )
@@ -351,9 +364,9 @@ class GCSHook(GoogleBaseHook):
         self,
         bucket_name: str,
         object_name: str,
-        chunk_size: Optional[int] = None,
-        timeout: Optional[int] = DEFAULT_TIMEOUT,
-        num_max_attempts: Optional[int] = 1,
+        chunk_size: int | None = None,
+        timeout: int | None = DEFAULT_TIMEOUT,
+        num_max_attempts: int | None = 1,
     ) -> bytes:
         """
         Downloads a file from Google Cloud Storage.
@@ -383,12 +396,12 @@ class GCSHook(GoogleBaseHook):
     def provide_file(
         self,
         bucket_name: str = PROVIDE_BUCKET,
-        object_name: Optional[str] = None,
-        object_url: Optional[str] = None,
-        dir: Optional[str] = None,
+        object_name: str | None = None,
+        object_url: str | None = None,
+        dir: str | None = None,
     ) -> Generator[IO[bytes], None, None]:
         """
-        Downloads the file to a temporary directory and returns a file handle
+        Downloads the file to a temporary directory and returns a file handle.
 
         You can use this method by passing the bucket_name and object_name parameters
         or just object_url parameter.
@@ -412,8 +425,8 @@ class GCSHook(GoogleBaseHook):
     def provide_file_and_upload(
         self,
         bucket_name: str = PROVIDE_BUCKET,
-        object_name: Optional[str] = None,
-        object_url: Optional[str] = None,
+        object_name: str | None = None,
+        object_url: str | None = None,
     ) -> Generator[IO[bytes], None, None]:
         """
         Creates temporary file, returns a file handle and uploads the files content
@@ -440,15 +453,16 @@ class GCSHook(GoogleBaseHook):
         self,
         bucket_name: str,
         object_name: str,
-        filename: Optional[str] = None,
-        data: Optional[Union[str, bytes]] = None,
-        mime_type: Optional[str] = None,
+        filename: str | None = None,
+        data: str | bytes | None = None,
+        mime_type: str | None = None,
         gzip: bool = False,
-        encoding: str = 'utf-8',
-        chunk_size: Optional[int] = None,
-        timeout: Optional[int] = DEFAULT_TIMEOUT,
+        encoding: str = "utf-8",
+        chunk_size: int | None = None,
+        timeout: int | None = DEFAULT_TIMEOUT,
         num_max_attempts: int = 1,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
+        cache_control: str | None = None,
     ) -> None:
         """
         Uploads a local file or file data as string or bytes to Google Cloud Storage.
@@ -464,6 +478,7 @@ class GCSHook(GoogleBaseHook):
         :param timeout: Request timeout in seconds.
         :param num_max_attempts: Number of attempts to try to upload the file.
         :param metadata: The metadata to be uploaded with the file.
+        :param cache_control: Cache-Control metadata field.
         """
 
         def _call_with_retry(f: Callable[[], None]) -> None:
@@ -480,7 +495,7 @@ class GCSHook(GoogleBaseHook):
                 except GoogleCloudError as e:
                     if num_file_attempts == num_max_attempts:
                         self.log.error(
-                            'Upload attempt of object: %s from %s has failed. Attempt: %s, max %s.',
+                            "Upload attempt of object: %s from %s has failed. Attempt: %s, max %s.",
                             object_name,
                             object_name,
                             num_file_attempts,
@@ -500,6 +515,9 @@ class GCSHook(GoogleBaseHook):
         if metadata:
             blob.metadata = metadata
 
+        if cache_control:
+            blob.cacheControl = cache_control
+
         if filename and data:
             raise ValueError(
                 "'filename' and 'data' parameter provided. Please "
@@ -508,12 +526,12 @@ class GCSHook(GoogleBaseHook):
             )
         elif filename:
             if not mime_type:
-                mime_type = 'application/octet-stream'
+                mime_type = "application/octet-stream"
             if gzip:
-                filename_gz = filename + '.gz'
+                filename_gz = filename + ".gz"
 
-                with open(filename, 'rb') as f_in:
-                    with gz.open(filename_gz, 'wb') as f_out:
+                with open(filename, "rb") as f_in:
+                    with gz.open(filename_gz, "wb") as f_out:
                         shutil.copyfileobj(f_in, f_out)
                         filename = filename_gz
 
@@ -523,10 +541,10 @@ class GCSHook(GoogleBaseHook):
 
             if gzip:
                 os.remove(filename)
-            self.log.info('File %s uploaded to %s in %s bucket', filename, object_name, bucket_name)
+            self.log.info("File %s uploaded to %s in %s bucket", filename, object_name, bucket_name)
         elif data:
             if not mime_type:
-                mime_type = 'text/plain'
+                mime_type = "text/plain"
             if gzip:
                 if isinstance(data, str):
                     data = bytes(data, encoding)
@@ -537,26 +555,27 @@ class GCSHook(GoogleBaseHook):
 
             _call_with_retry(partial(blob.upload_from_string, data, content_type=mime_type, timeout=timeout))
 
-            self.log.info('Data stream uploaded to %s in %s bucket', object_name, bucket_name)
+            self.log.info("Data stream uploaded to %s in %s bucket", object_name, bucket_name)
         else:
             raise ValueError("'filename' and 'data' parameter missing. One is required to upload to gcs.")
 
-    def exists(self, bucket_name: str, object_name: str) -> bool:
+    def exists(self, bucket_name: str, object_name: str, retry: Retry = DEFAULT_RETRY) -> bool:
         """
         Checks for the existence of a file in Google Cloud Storage.
 
         :param bucket_name: The Google Cloud Storage bucket where the object is.
         :param object_name: The name of the blob_name to check in the Google cloud
             storage bucket.
+        :param retry: (Optional) How to retry the RPC
         """
         client = self.get_conn()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_name=object_name)
-        return blob.exists()
+        return blob.exists(retry=retry)
 
     def get_blob_update_time(self, bucket_name: str, object_name: str):
         """
-        Get the update time of a file in Google Cloud Storage
+        Get the update time of a file in Google Cloud Storage.
 
         :param bucket_name: The Google Cloud Storage bucket where the object is.
         :param object_name: The name of the blob to get updated time from the Google cloud
@@ -633,7 +652,7 @@ class GCSHook(GoogleBaseHook):
 
     def is_older_than(self, bucket_name: str, object_name: str, seconds: int) -> bool:
         """
-        Check if object is older than given time
+        Check if object is older than given time.
 
         :param bucket_name: The Google Cloud Storage bucket where the object is.
         :param object_name: The name of the object to check in the Google cloud
@@ -663,7 +682,7 @@ class GCSHook(GoogleBaseHook):
         blob = bucket.blob(blob_name=object_name)
         blob.delete()
 
-        self.log.info('Blob %s deleted.', object_name)
+        self.log.info("Blob %s deleted.", object_name)
 
     def delete_bucket(self, bucket_name: str, force: bool = False) -> None:
         """
@@ -683,15 +702,63 @@ class GCSHook(GoogleBaseHook):
         except NotFound:
             self.log.info("Bucket %s not exists", bucket_name)
 
-    def list(self, bucket_name, versions=None, max_results=None, prefix=None, delimiter=None) -> list:
+    def list(
+        self,
+        bucket_name: str,
+        versions: bool | None = None,
+        max_results: int | None = None,
+        prefix: str | List[str] | None = None,
+        delimiter: str | None = None,
+    ):
         """
-        List all objects from the bucket with the give string prefix in name
+        List all objects from the bucket with the given a single prefix or multiple prefixes.
 
         :param bucket_name: bucket name
         :param versions: if true, list all versions of the objects
         :param max_results: max count of items to return in a single page of responses
-        :param prefix: prefix string which filters objects whose name begin with
-            this prefix
+        :param prefix: string or list of strings which filter objects whose name begin with it/them
+        :param delimiter: filters objects based on the delimiter (for e.g '.csv')
+        :return: a stream of object names matching the filtering criteria
+        """
+        objects = []
+        if isinstance(prefix, list):
+            for prefix_item in prefix:
+                objects.extend(
+                    self._list(
+                        bucket_name=bucket_name,
+                        versions=versions,
+                        max_results=max_results,
+                        prefix=prefix_item,
+                        delimiter=delimiter,
+                    )
+                )
+        else:
+            objects.extend(
+                self._list(
+                    bucket_name=bucket_name,
+                    versions=versions,
+                    max_results=max_results,
+                    prefix=prefix,
+                    delimiter=delimiter,
+                )
+            )
+        return objects
+
+    def _list(
+        self,
+        bucket_name: str,
+        versions: bool | None = None,
+        max_results: int | None = None,
+        prefix: str | None = None,
+        delimiter: str | None = None,
+    ) -> List:
+        """
+        List all objects from the bucket with the give string prefix in name.
+
+        :param bucket_name: bucket name
+        :param versions: if true, list all versions of the objects
+        :param max_results: max count of items to return in a single page of responses
+        :param prefix: string which filters objects whose name begin with it
         :param delimiter: filters objects based on the delimiter (for e.g '.csv')
         :return: a stream of object names matching the filtering criteria
         """
@@ -730,10 +797,10 @@ class GCSHook(GoogleBaseHook):
         bucket_name: str,
         timespan_start: datetime,
         timespan_end: datetime,
-        versions: Optional[bool] = None,
-        max_results: Optional[int] = None,
-        prefix: Optional[str] = None,
-        delimiter: Optional[str] = None,
+        versions: bool | None = None,
+        max_results: int | None = None,
+        prefix: str | None = None,
+        delimiter: str | None = None,
     ) -> List[str]:
         """
         List all objects from the bucket with the give string prefix in name that were
@@ -790,12 +857,12 @@ class GCSHook(GoogleBaseHook):
             cloud storage bucket_name.
 
         """
-        self.log.info('Checking the file size of object: %s in bucket_name: %s', object_name, bucket_name)
+        self.log.info("Checking the file size of object: %s in bucket_name: %s", object_name, bucket_name)
         client = self.get_conn()
         bucket = client.bucket(bucket_name)
         blob = bucket.get_blob(blob_name=object_name)
         blob_size = blob.size
-        self.log.info('The file size of %s is %s bytes.', object_name, blob_size)
+        self.log.info("The file size of %s is %s bytes.", object_name, blob_size)
         return blob_size
 
     def get_crc32c(self, bucket_name: str, object_name: str):
@@ -807,7 +874,7 @@ class GCSHook(GoogleBaseHook):
             storage bucket_name.
         """
         self.log.info(
-            'Retrieving the crc32c checksum of object_name: %s in bucket_name: %s',
+            "Retrieving the crc32c checksum of object_name: %s in bucket_name: %s",
             object_name,
             bucket_name,
         )
@@ -815,7 +882,7 @@ class GCSHook(GoogleBaseHook):
         bucket = client.bucket(bucket_name)
         blob = bucket.get_blob(blob_name=object_name)
         blob_crc32c = blob.crc32c
-        self.log.info('The crc32c checksum of %s is %s', object_name, blob_crc32c)
+        self.log.info("The crc32c checksum of %s is %s", object_name, blob_crc32c)
         return blob_crc32c
 
     def get_md5hash(self, bucket_name: str, object_name: str) -> str:
@@ -826,23 +893,23 @@ class GCSHook(GoogleBaseHook):
         :param object_name: The name of the object to check in the Google cloud
             storage bucket_name.
         """
-        self.log.info('Retrieving the MD5 hash of object: %s in bucket: %s', object_name, bucket_name)
+        self.log.info("Retrieving the MD5 hash of object: %s in bucket: %s", object_name, bucket_name)
         client = self.get_conn()
         bucket = client.bucket(bucket_name)
         blob = bucket.get_blob(blob_name=object_name)
         blob_md5hash = blob.md5_hash
-        self.log.info('The md5Hash of %s is %s', object_name, blob_md5hash)
+        self.log.info("The md5Hash of %s is %s", object_name, blob_md5hash)
         return blob_md5hash
 
     @GoogleBaseHook.fallback_to_default_project_id
     def create_bucket(
         self,
         bucket_name: str,
-        resource: Optional[dict] = None,
-        storage_class: str = 'MULTI_REGIONAL',
-        location: str = 'US',
-        project_id: Optional[str] = None,
-        labels: Optional[dict] = None,
+        resource: dict | None = None,
+        storage_class: str = "MULTI_REGIONAL",
+        location: str = "US",
+        project_id: str | None = None,
+        labels: dict | None = None,
     ) -> str:
         """
         Creates a new bucket. Google Cloud Storage uses a flat namespace, so
@@ -879,12 +946,12 @@ class GCSHook(GoogleBaseHook):
         :return: If successful, it returns the ``id`` of the bucket.
         """
         self.log.info(
-            'Creating Bucket: %s; Location: %s; Storage Class: %s', bucket_name, location, storage_class
+            "Creating Bucket: %s; Location: %s; Storage Class: %s", bucket_name, location, storage_class
         )
 
         # Add airflow-version label to the bucket
         labels = labels or {}
-        labels['airflow-version'] = 'v' + version.replace('.', '-').replace('+', '-')
+        labels["airflow-version"] = "v" + version.replace(".", "-").replace("+", "-")
 
         client = self.get_conn()
         bucket = client.bucket(bucket_name=bucket_name)
@@ -900,10 +967,11 @@ class GCSHook(GoogleBaseHook):
         return bucket.id
 
     def insert_bucket_acl(
-        self, bucket_name: str, entity: str, role: str, user_project: Optional[str] = None
+        self, bucket_name: str, entity: str, role: str, user_project: str | None = None
     ) -> None:
         """
         Creates a new ACL entry on the specified bucket_name.
+
         See: https://cloud.google.com/storage/docs/json_api/v1/bucketAccessControls/insert
 
         :param bucket_name: Name of a bucket_name.
@@ -916,7 +984,7 @@ class GCSHook(GoogleBaseHook):
         :param user_project: (Optional) The project to be billed for this request.
             Required for Requester Pays buckets.
         """
-        self.log.info('Creating a new ACL entry in bucket: %s', bucket_name)
+        self.log.info("Creating a new ACL entry in bucket: %s", bucket_name)
         client = self.get_conn()
         bucket = client.bucket(bucket_name=bucket_name)
         bucket.acl.reload()
@@ -925,7 +993,7 @@ class GCSHook(GoogleBaseHook):
             bucket.acl.user_project = user_project
         bucket.acl.save()
 
-        self.log.info('A new ACL entry created in bucket: %s', bucket_name)
+        self.log.info("A new ACL entry created in bucket: %s", bucket_name)
 
     def insert_object_acl(
         self,
@@ -933,11 +1001,12 @@ class GCSHook(GoogleBaseHook):
         object_name: str,
         entity: str,
         role: str,
-        generation: Optional[int] = None,
-        user_project: Optional[str] = None,
+        generation: int | None = None,
+        user_project: str | None = None,
     ) -> None:
         """
         Creates a new ACL entry on the specified object.
+
         See: https://cloud.google.com/storage/docs/json_api/v1/objectAccessControls/insert
 
         :param bucket_name: Name of a bucket_name.
@@ -954,7 +1023,7 @@ class GCSHook(GoogleBaseHook):
         :param user_project: (Optional) The project to be billed for this request.
             Required for Requester Pays buckets.
         """
-        self.log.info('Creating a new ACL entry for object: %s in bucket: %s', object_name, bucket_name)
+        self.log.info("Creating a new ACL entry for object: %s in bucket: %s", object_name, bucket_name)
         client = self.get_conn()
         bucket = client.bucket(bucket_name=bucket_name)
         blob = bucket.blob(blob_name=object_name, generation=generation)
@@ -965,11 +1034,11 @@ class GCSHook(GoogleBaseHook):
             blob.acl.user_project = user_project
         blob.acl.save()
 
-        self.log.info('A new ACL entry created for object: %s in bucket: %s', object_name, bucket_name)
+        self.log.info("A new ACL entry created for object: %s in bucket: %s", object_name, bucket_name)
 
-    def compose(self, bucket_name: str, source_objects: List, destination_object: str) -> None:
+    def compose(self, bucket_name: str, source_objects: List[str], destination_object: str) -> None:
         """
-        Composes a list of existing object into a new object in the same storage bucket_name
+        Composes a list of existing object into a new object in the same storage bucket_name.
 
         Currently it only supports up to 32 objects that can be concatenated
         in a single operation
@@ -983,10 +1052,10 @@ class GCSHook(GoogleBaseHook):
         :param destination_object: The path of the object if given.
         """
         if not source_objects:
-            raise ValueError('source_objects cannot be empty.')
+            raise ValueError("source_objects cannot be empty.")
 
         if not bucket_name or not destination_object:
-            raise ValueError('bucket_name and destination_object cannot be empty.')
+            raise ValueError("bucket_name and destination_object cannot be empty.")
 
         self.log.info("Composing %s to %s in the bucket %s", source_objects, destination_object, bucket_name)
         client = self.get_conn()
@@ -1002,8 +1071,8 @@ class GCSHook(GoogleBaseHook):
         self,
         source_bucket: str,
         destination_bucket: str,
-        source_object: Optional[str] = None,
-        destination_object: Optional[str] = None,
+        source_object: str | None = None,
+        destination_object: str | None = None,
         recursive: bool = True,
         allow_overwrite: bool = False,
         delete_extra_files: bool = False,
@@ -1104,7 +1173,7 @@ class GCSHook(GoogleBaseHook):
         self.log.info("Synchronization finished.")
 
     def _calculate_sync_destination_path(
-        self, blob: storage.Blob, destination_object: Optional[str], source_object_prefix_len: int
+        self, blob: storage.Blob, destination_object: str | None, source_object_prefix_len: int
     ) -> str:
         return (
             path.join(destination_object, blob.name[source_object_prefix_len:])
@@ -1116,10 +1185,10 @@ class GCSHook(GoogleBaseHook):
     def _prepare_sync_plan(
         source_bucket: storage.Bucket,
         destination_bucket: storage.Bucket,
-        source_object: Optional[str],
-        destination_object: Optional[str],
+        source_object: str | None,
+        destination_object: str | None,
         recursive: bool,
-    ) -> Tuple[Set[storage.Blob], Set[storage.Blob], Set[storage.Blob]]:
+    ) -> tuple[set[storage.Blob], set[storage.Blob], set[storage.Blob]]:
         # Calculate the number of characters that remove from the name, because they contain information
         # about the parent's path
         source_object_prefix_len = len(source_object) if source_object else 0
@@ -1139,11 +1208,11 @@ class GCSHook(GoogleBaseHook):
         # Determine objects to copy and delete
         to_copy = source_names - destination_names
         to_delete = destination_names - source_names
-        to_copy_blobs = {source_names_index[a] for a in to_copy}  # type: Set[storage.Blob]
-        to_delete_blobs = {destination_names_index[a] for a in to_delete}  # type: Set[storage.Blob]
+        to_copy_blobs: set[storage.Blob] = {source_names_index[a] for a in to_copy}
+        to_delete_blobs: set[storage.Blob] = {destination_names_index[a] for a in to_delete}
         # Find names that are in both buckets
         names_to_check = source_names.intersection(destination_names)
-        to_rewrite_blobs = set()  # type: Set[storage.Blob]
+        to_rewrite_blobs: set[storage.Blob] = set()
         # Compare objects based on crc32
         for current_name in names_to_check:
             source_blob = source_names_index[current_name]
@@ -1161,21 +1230,62 @@ def gcs_object_is_directory(bucket: str) -> bool:
     """
     _, blob = _parse_gcs_url(bucket)
 
-    return len(blob) == 0 or blob.endswith('/')
+    return len(blob) == 0 or blob.endswith("/")
 
 
-def _parse_gcs_url(gsurl: str) -> Tuple[str, str]:
+def parse_json_from_gcs(gcp_conn_id: str, file_uri: str) -> Any:
+    """
+    Downloads and parses json file from Google cloud Storage.
+
+    :param gcp_conn_id: Airflow Google Cloud connection ID.
+    :param file_uri: full path to json file
+        example: ``gs://test-bucket/dir1/dir2/file``
+    """
+    gcs_hook = GCSHook(gcp_conn_id=gcp_conn_id)
+    bucket, blob = _parse_gcs_url(file_uri)
+    with NamedTemporaryFile(mode="w+b") as file:
+        try:
+            gcs_hook.download(bucket_name=bucket, object_name=blob, filename=file.name)
+        except GoogleAPICallError as ex:
+            raise AirflowException(f"Failed to download file with query result: {ex}")
+
+        file.seek(0)
+        try:
+            json_data = file.read()
+        except (ValueError, OSError, RuntimeError) as ex:
+            raise AirflowException(f"Failed to read file: {ex}")
+
+        try:
+            result = json.loads(json_data)
+        except json.JSONDecodeError as ex:
+            raise AirflowException(f"Failed to decode query result from bytes to json: {ex}")
+
+        return result
+
+
+def _parse_gcs_url(gsurl: str) -> tuple[str, str]:
     """
     Given a Google Cloud Storage URL (gs://<bucket>/<blob>), returns a
     tuple containing the corresponding bucket and blob.
     """
-    parsed_url = urlparse(gsurl)
+    parsed_url = urlsplit(gsurl)
     if not parsed_url.netloc:
-        raise AirflowException('Please provide a bucket name')
+        raise AirflowException("Please provide a bucket name")
     if parsed_url.scheme.lower() != "gs":
         raise AirflowException(f"Schema must be to 'gs://': Current schema: '{parsed_url.scheme}://'")
 
     bucket = parsed_url.netloc
     # Remove leading '/' but NOT trailing one
-    blob = parsed_url.path.lstrip('/')
+    blob = parsed_url.path.lstrip("/")
     return bucket, blob
+
+
+class GCSAsyncHook(GoogleBaseAsyncHook):
+    """GCSAsyncHook run on the trigger worker, inherits from GoogleBaseHookAsync."""
+
+    sync_hook_class = GCSHook
+
+    async def get_storage_client(self, session: ClientSession) -> Storage:
+        """Returns a Google Cloud Storage service object."""
+        with await self.service_file_as_context() as file:
+            return Storage(service_file=file, session=cast(Session, session))

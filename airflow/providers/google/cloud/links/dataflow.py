@@ -16,7 +16,9 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains Google Dataflow links."""
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
 from airflow.providers.google.cloud.links.base import BaseGoogleLink
@@ -24,12 +26,12 @@ from airflow.providers.google.cloud.links.base import BaseGoogleLink
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
-DATAFLOW_BASE_LINK = "https://pantheon.corp.google.com/dataflow/jobs"
+DATAFLOW_BASE_LINK = "/dataflow/jobs"
 DATAFLOW_JOB_LINK = DATAFLOW_BASE_LINK + "/{region}/{job_id}?project={project_id}"
 
 
 class DataflowJobLink(BaseGoogleLink):
-    """Helper class for constructing Dataflow Job Link"""
+    """Helper class for constructing Dataflow Job Link."""
 
     name = "Dataflow Job"
     key = "dataflow_job_config"
@@ -38,13 +40,13 @@ class DataflowJobLink(BaseGoogleLink):
     @staticmethod
     def persist(
         operator_instance: BaseOperator,
-        context: "Context",
-        project_id: Optional[str],
-        region: Optional[str],
-        job_id: Optional[str],
+        context: Context,
+        project_id: str | None,
+        region: str | None,
+        job_id: str | None,
     ):
         operator_instance.xcom_push(
             context,
             key=DataflowJobLink.key,
-            value={"project_id": project_id, "location": region, "job_id": job_id},
+            value={"project_id": project_id, "region": region, "job_id": job_id},
         )

@@ -15,8 +15,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import warnings
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from functools import cached_property
+from typing import TYPE_CHECKING, Sequence
+
+from deprecated import deprecated
 
 from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.glue_crawler import GlueCrawlerHook
@@ -28,7 +32,8 @@ if TYPE_CHECKING:
 
 class GlueCrawlerSensor(BaseSensorOperator):
     """
-    Waits for an AWS Glue crawler to reach any of the statuses below
+    Waits for an AWS Glue crawler to reach any of the statuses below.
+
     'FAILED', 'CANCELLED', 'SUCCEEDED'
 
     .. seealso::
@@ -39,21 +44,21 @@ class GlueCrawlerSensor(BaseSensorOperator):
     :param aws_conn_id: aws connection to use, defaults to 'aws_default'
     """
 
-    def __init__(self, *, crawler_name: str, aws_conn_id: str = 'aws_default', **kwargs) -> None:
+    template_fields: Sequence[str] = ("crawler_name",)
+
+    def __init__(self, *, crawler_name: str, aws_conn_id: str = "aws_default", **kwargs) -> None:
         super().__init__(**kwargs)
         self.crawler_name = crawler_name
         self.aws_conn_id = aws_conn_id
-        self.success_statuses = 'SUCCEEDED'
-        self.errored_statuses = ('FAILED', 'CANCELLED')
-        self.hook: Optional[GlueCrawlerHook] = None
+        self.success_statuses = "SUCCEEDED"
+        self.errored_statuses = ("FAILED", "CANCELLED")
 
-    def poke(self, context: 'Context'):
-        hook = self.get_hook()
+    def poke(self, context: Context):
         self.log.info("Poking for AWS Glue crawler: %s", self.crawler_name)
-        crawler_state = hook.get_crawler(self.crawler_name)['State']
-        if crawler_state == 'READY':
+        crawler_state = self.hook.get_crawler(self.crawler_name)["State"]
+        if crawler_state == "READY":
             self.log.info("State: %s", crawler_state)
-            crawler_status = hook.get_crawler(self.crawler_name)['LastCrawl']['Status']
+            crawler_status = self.hook.get_crawler(self.crawler_name)["LastCrawl"]["Status"]
             if crawler_status == self.success_statuses:
                 self.log.info("Status: %s", crawler_status)
                 return True
@@ -62,26 +67,11 @@ class GlueCrawlerSensor(BaseSensorOperator):
         else:
             return False
 
+    @deprecated(reason="use `hook` property instead.")
     def get_hook(self) -> GlueCrawlerHook:
-        """Returns a new or pre-existing GlueCrawlerHook"""
-        if self.hook:
-            return self.hook
-
-        self.hook = GlueCrawlerHook(aws_conn_id=self.aws_conn_id)
+        """Returns a new or pre-existing GlueCrawlerHook."""
         return self.hook
 
-
-class AwsGlueCrawlerSensor(GlueCrawlerSensor):
-    """
-    This sensor is deprecated. Please use
-    :class:`airflow.providers.amazon.aws.sensors.glue_crawler.GlueCrawlerSensor`.
-    """
-
-    def __init__(self, *args, **kwargs):
-        warnings.warn(
-            "This sensor is deprecated. "
-            "Please use :class:`airflow.providers.amazon.aws.sensors.glue_crawler.GlueCrawlerSensor`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(*args, **kwargs)
+    @cached_property
+    def hook(self) -> GlueCrawlerHook:
+        return GlueCrawlerHook(aws_conn_id=self.aws_conn_id)

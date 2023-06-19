@@ -15,7 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import unittest
+from __future__ import annotations
+
 from unittest import mock
 
 from airflow.providers.google.marketing_platform.hooks.analytics import GoogleAnalyticsHook
@@ -31,8 +32,8 @@ DELEGATE_TO = "TEST_DELEGATE_TO"
 IMPERSONATION_CHAIN = ["ACCOUNT_1", "ACCOUNT_2", "ACCOUNT_3"]
 
 
-class TestGoogleAnalyticsHook(unittest.TestCase):
-    def setUp(self):
+class TestGoogleAnalyticsHook:
+    def setup_method(self):
         with mock.patch(
             "airflow.providers.google.common.hooks.base_google.GoogleBaseHook.__init__",
             new=mock_base_gcp_hook_default_project_id,

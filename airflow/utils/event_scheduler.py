@@ -15,13 +15,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 from sched import scheduler
 from typing import Callable
 
 
 class EventScheduler(scheduler):
-    """General purpose event scheduler"""
+    """General purpose event scheduler."""
 
     def call_regular_interval(
         self,
@@ -30,7 +31,7 @@ class EventScheduler(scheduler):
         arguments=(),
         kwargs={},
     ):
-        """Helper to call a function at (roughly) a given interval"""
+        """Helper to call a function at (roughly) a given interval."""
 
         def repeat(*args, **kwargs):
             action(*args, **kwargs)

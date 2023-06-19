@@ -14,8 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
-import unittest
 from unittest import mock
 
 import pytest
@@ -32,10 +32,10 @@ LOOKER_CONN_ID = "test-conn"
 TEST_JOB_ID = "123"
 
 
-class TestLookerCheckPdtBuildSensor(unittest.TestCase):
+class TestLookerCheckPdtBuildSensor:
     @mock.patch(SENSOR_PATH.format("LookerHook"))
     def test_done(self, mock_hook):
-        mock_hook.return_value.pdt_build_status.return_value = {'status': JobStatus.DONE.value}
+        mock_hook.return_value.pdt_build_status.return_value = {"status": JobStatus.DONE.value}
 
         # run task in mock context
         sensor = LookerCheckPdtBuildSensor(
@@ -54,8 +54,8 @@ class TestLookerCheckPdtBuildSensor(unittest.TestCase):
     @mock.patch(SENSOR_PATH.format("LookerHook"))
     def test_error(self, mock_hook):
         mock_hook.return_value.pdt_build_status.return_value = {
-            'status': JobStatus.ERROR.value,
-            'message': 'test',
+            "status": JobStatus.ERROR.value,
+            "message": "test",
         }
 
         # run task in mock context
@@ -73,7 +73,7 @@ class TestLookerCheckPdtBuildSensor(unittest.TestCase):
 
     @mock.patch(SENSOR_PATH.format("LookerHook"))
     def test_wait(self, mock_hook):
-        mock_hook.return_value.pdt_build_status.return_value = {'status': JobStatus.RUNNING.value}
+        mock_hook.return_value.pdt_build_status.return_value = {"status": JobStatus.RUNNING.value}
 
         # run task in mock context
         sensor = LookerCheckPdtBuildSensor(
@@ -91,7 +91,7 @@ class TestLookerCheckPdtBuildSensor(unittest.TestCase):
 
     @mock.patch(SENSOR_PATH.format("LookerHook"))
     def test_cancelled(self, mock_hook):
-        mock_hook.return_value.pdt_build_status.return_value = {'status': JobStatus.CANCELLED.value}
+        mock_hook.return_value.pdt_build_status.return_value = {"status": JobStatus.CANCELLED.value}
 
         # run task in mock context
         sensor = LookerCheckPdtBuildSensor(

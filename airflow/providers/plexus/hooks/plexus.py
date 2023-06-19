@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 from typing import Any
 
 import arrow
@@ -65,7 +67,7 @@ class PlexusHook(BaseHook):
 
     @property
     def token(self) -> Any:
-        """Returns users token"""
+        """Returns users token."""
         if self.__token is not None:
             if not self.__token_exp or arrow.get(self.__token_exp) <= arrow.now():
                 self.__token = self._generate_token()

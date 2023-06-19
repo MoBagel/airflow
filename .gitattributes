@@ -1,6 +1,3 @@
-breeze export-ignore
-breeze-legacy export-ignore
-breeze-complete export-ignore
 clients export-ignore
 clients export-ignore
 dev export-ignore
@@ -33,7 +30,6 @@ CONTRIBUTORS_QUICK_START.rst export-ignore
 .pre-commit-config.yaml export-ignore
 .mailmap export-ignore
 .editorconfig export-ignore
-.flake8 export-ignore
 .inputrc export-ignore
 .codespellignorelines export-ignore
 .gitmodules export-ignore

@@ -15,9 +15,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """This module contains Alibaba Cloud OSS operators."""
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
 from airflow.providers.alibaba.cloud.hooks.oss import OSSHook
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
 class OSSCreateBucketOperator(BaseOperator):
     """
-    This operator creates an OSS bucket
+    This operator creates an OSS bucket.
 
     :param region: OSS region you want to create bucket
     :param bucket_name: This is bucket name you want to create
@@ -38,8 +39,8 @@ class OSSCreateBucketOperator(BaseOperator):
     def __init__(
         self,
         region: str,
-        bucket_name: Optional[str] = None,
-        oss_conn_id: str = 'oss_default',
+        bucket_name: str | None = None,
+        oss_conn_id: str = "oss_default",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -47,14 +48,14 @@ class OSSCreateBucketOperator(BaseOperator):
         self.region = region
         self.bucket_name = bucket_name
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         oss_hook = OSSHook(oss_conn_id=self.oss_conn_id, region=self.region)
         oss_hook.create_bucket(bucket_name=self.bucket_name)
 
 
 class OSSDeleteBucketOperator(BaseOperator):
     """
-    This operator to delete an OSS bucket
+    This operator to delete an OSS bucket.
 
     :param region: OSS region you want to create bucket
     :param bucket_name: This is bucket name you want to delete
@@ -64,8 +65,8 @@ class OSSDeleteBucketOperator(BaseOperator):
     def __init__(
         self,
         region: str,
-        bucket_name: Optional[str] = None,
-        oss_conn_id: str = 'oss_default',
+        bucket_name: str | None = None,
+        oss_conn_id: str = "oss_default",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -73,14 +74,14 @@ class OSSDeleteBucketOperator(BaseOperator):
         self.region = region
         self.bucket_name = bucket_name
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         oss_hook = OSSHook(oss_conn_id=self.oss_conn_id, region=self.region)
         oss_hook.delete_bucket(bucket_name=self.bucket_name)
 
 
 class OSSUploadObjectOperator(BaseOperator):
     """
-    This operator to upload an file-like object
+    This operator to upload an file-like object.
 
     :param key: the OSS path of the object
     :param file: local file to upload.
@@ -94,8 +95,8 @@ class OSSUploadObjectOperator(BaseOperator):
         key: str,
         file: str,
         region: str,
-        bucket_name: Optional[str] = None,
-        oss_conn_id: str = 'oss_default',
+        bucket_name: str | None = None,
+        oss_conn_id: str = "oss_default",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -105,14 +106,14 @@ class OSSUploadObjectOperator(BaseOperator):
         self.region = region
         self.bucket_name = bucket_name
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         oss_hook = OSSHook(oss_conn_id=self.oss_conn_id, region=self.region)
         oss_hook.upload_local_file(bucket_name=self.bucket_name, key=self.key, file=self.file)
 
 
 class OSSDownloadObjectOperator(BaseOperator):
     """
-    This operator to Download an OSS object
+    This operator to Download an OSS object.
 
     :param key: key of the object to download.
     :param local_file: local path + file name to save.
@@ -126,8 +127,8 @@ class OSSDownloadObjectOperator(BaseOperator):
         key: str,
         file: str,
         region: str,
-        bucket_name: Optional[str] = None,
-        oss_conn_id: str = 'oss_default',
+        bucket_name: str | None = None,
+        oss_conn_id: str = "oss_default",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -137,14 +138,14 @@ class OSSDownloadObjectOperator(BaseOperator):
         self.region = region
         self.bucket_name = bucket_name
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         oss_hook = OSSHook(oss_conn_id=self.oss_conn_id, region=self.region)
         oss_hook.download_file(bucket_name=self.bucket_name, key=self.key, local_file=self.file)
 
 
 class OSSDeleteBatchObjectOperator(BaseOperator):
     """
-    This operator to delete OSS objects
+    This operator to delete OSS objects.
 
     :param key: key list of the objects to delete.
     :param region: OSS region
@@ -156,8 +157,8 @@ class OSSDeleteBatchObjectOperator(BaseOperator):
         self,
         keys: list,
         region: str,
-        bucket_name: Optional[str] = None,
-        oss_conn_id: str = 'oss_default',
+        bucket_name: str | None = None,
+        oss_conn_id: str = "oss_default",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -166,14 +167,14 @@ class OSSDeleteBatchObjectOperator(BaseOperator):
         self.region = region
         self.bucket_name = bucket_name
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         oss_hook = OSSHook(oss_conn_id=self.oss_conn_id, region=self.region)
         oss_hook.delete_objects(bucket_name=self.bucket_name, key=self.keys)
 
 
 class OSSDeleteObjectOperator(BaseOperator):
     """
-    This operator to delete an OSS object
+    This operator to delete an OSS object.
 
     :param key: key of the object to delete.
     :param region: OSS region
@@ -185,8 +186,8 @@ class OSSDeleteObjectOperator(BaseOperator):
         self,
         key: str,
         region: str,
-        bucket_name: Optional[str] = None,
-        oss_conn_id: str = 'oss_default',
+        bucket_name: str | None = None,
+        oss_conn_id: str = "oss_default",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -195,6 +196,6 @@ class OSSDeleteObjectOperator(BaseOperator):
         self.region = region
         self.bucket_name = bucket_name
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         oss_hook = OSSHook(oss_conn_id=self.oss_conn_id, region=self.region)
         oss_hook.delete_object(bucket_name=self.bucket_name, key=self.key)

@@ -14,7 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import Any, Dict, List, Optional, Union
+from __future__ import annotations
+
+from typing import Any
 
 from azure.servicebus import ServiceBusClient, ServiceBusMessage, ServiceBusSender
 from azure.servicebus.management import QueueProperties, ServiceBusAdministrationClient
@@ -24,25 +26,25 @@ from airflow.hooks.base import BaseHook
 
 class BaseAzureServiceBusHook(BaseHook):
     """
-    BaseAzureServiceBusHook class to create session and create connection using connection string
+    BaseAzureServiceBusHook class to create session and create connection using connection string.
 
     :param azure_service_bus_conn_id: Reference to the
         :ref:`Azure Service Bus connection<howto/connection:azure_service_bus>`.
     """
 
-    conn_name_attr = 'azure_service_bus_conn_id'
-    default_conn_name = 'azure_service_bus_default'
-    conn_type = 'azure_service_bus'
-    hook_name = 'Azure Service Bus'
+    conn_name_attr = "azure_service_bus_conn_id"
+    default_conn_name = "azure_service_bus_default"
+    conn_type = "azure_service_bus"
+    hook_name = "Azure Service Bus"
 
     @staticmethod
-    def get_ui_field_behaviour() -> Dict[str, Any]:
-        """Returns custom field behaviour"""
+    def get_ui_field_behaviour() -> dict[str, Any]:
+        """Returns custom field behaviour."""
         return {
-            "hidden_fields": ['port', 'host', 'extra', 'login', 'password'],
-            "relabeling": {'schema': 'Connection String'},
+            "hidden_fields": ["port", "host", "extra", "login", "password"],
+            "relabeling": {"schema": "Connection String"},
             "placeholders": {
-                'schema': 'Endpoint=sb://<Resource group>.servicebus.windows.net/;SharedAccessKeyName=<AccessKeyName>;SharedAccessKey=<SharedAccessKey>',  # noqa
+                "schema": "Endpoint=sb://<Resource group>.servicebus.windows.net/;SharedAccessKeyName=<AccessKeyName>;SharedAccessKey=<SharedAccessKey>",  # noqa
             },
         }
 
@@ -59,13 +61,13 @@ class AdminClientHook(BaseAzureServiceBusHook):
     Interacts with ServiceBusAdministrationClient client
     to create, update, list, and delete resources of a
     Service Bus namespace.  This hook uses the same Azure Service Bus client connection inherited
-    from the base class
+    from the base class.
     """
 
     def get_conn(self) -> ServiceBusAdministrationClient:
         """
         Create and returns ServiceBusAdministrationClient by using the connection
-        string in connection details
+        string in connection details.
         """
         conn = self.get_connection(self.conn_id)
 
@@ -80,7 +82,7 @@ class AdminClientHook(BaseAzureServiceBusHook):
         enable_batched_operations: bool = True,
     ) -> QueueProperties:
         """
-        Create Queue by connecting to service Bus Admin client return the QueueProperties
+        Create Queue by connecting to service Bus Admin client return the QueueProperties.
 
         :param queue_name: The name of the queue or a QueueProperties with name.
         :param max_delivery_count: The maximum delivery count. A message is automatically
@@ -104,7 +106,7 @@ class AdminClientHook(BaseAzureServiceBusHook):
 
     def delete_queue(self, queue_name: str) -> None:
         """
-        Delete the queue by queue_name in service bus namespace
+        Delete the queue by queue_name in service bus namespace.
 
         :param queue_name: The name of the queue or a QueueProperties with name.
         """
@@ -116,7 +118,7 @@ class AdminClientHook(BaseAzureServiceBusHook):
 
     def delete_subscription(self, subscription_name: str, topic_name: str) -> None:
         """
-        Delete a topic subscription entities under a ServiceBus Namespace
+        Delete a topic subscription entities under a ServiceBus Namespace.
 
         :param subscription_name: The subscription name that will own the rule in topic
         :param topic_name: The topic that will own the subscription rule.
@@ -138,19 +140,17 @@ class MessageHook(BaseAzureServiceBusHook):
     """
 
     def get_conn(self) -> ServiceBusClient:
-        """Create and returns ServiceBusClient by using the connection string in connection details"""
+        """Create and returns ServiceBusClient by using the connection string in connection details."""
         conn = self.get_connection(self.conn_id)
         connection_string: str = str(conn.schema)
 
         self.log.info("Create and returns ServiceBusClient")
         return ServiceBusClient.from_connection_string(conn_str=connection_string, logging_enable=True)
 
-    def send_message(
-        self, queue_name: str, messages: Union[str, List[str]], batch_message_flag: bool = False
-    ):
+    def send_message(self, queue_name: str, messages: str | list[str], batch_message_flag: bool = False):
         """
         By using ServiceBusClient Send message(s) to a Service Bus Queue. By using
-        batch_message_flag it enables and send message as batch message
+        batch_message_flag it enables and send message as batch message.
 
         :param queue_name: The name of the queue or a QueueProperties with name.
         :param messages: Message which needs to be sent to the queue. It can be string or list of string.
@@ -178,22 +178,22 @@ class MessageHook(BaseAzureServiceBusHook):
                         self.send_batch_message(sender, messages)
 
     @staticmethod
-    def send_list_messages(sender: ServiceBusSender, messages: List[str]):
+    def send_list_messages(sender: ServiceBusSender, messages: list[str]):
         list_messages = [ServiceBusMessage(message) for message in messages]
         sender.send_messages(list_messages)  # type: ignore[arg-type]
 
     @staticmethod
-    def send_batch_message(sender: ServiceBusSender, messages: List[str]):
+    def send_batch_message(sender: ServiceBusSender, messages: list[str]):
         batch_message = sender.create_message_batch()
         for message in messages:
             batch_message.add_message(ServiceBusMessage(message))
         sender.send_messages(batch_message)
 
     def receive_message(
-        self, queue_name, max_message_count: Optional[int] = 1, max_wait_time: Optional[float] = None
+        self, queue_name, max_message_count: int | None = 1, max_wait_time: float | None = None
     ):
         """
-        Receive a batch of messages at once in a specified Queue name
+        Receive a batch of messages at once in a specified Queue name.
 
         :param queue_name: The name of the queue name or a QueueProperties with name.
         :param max_message_count: Maximum number of messages in the batch.
@@ -217,8 +217,8 @@ class MessageHook(BaseAzureServiceBusHook):
         self,
         topic_name: str,
         subscription_name: str,
-        max_message_count: Optional[int],
-        max_wait_time: Optional[float],
+        max_message_count: int | None,
+        max_wait_time: float | None,
     ):
         """
         Receive a batch of subscription message at once. This approach is optimal if you wish

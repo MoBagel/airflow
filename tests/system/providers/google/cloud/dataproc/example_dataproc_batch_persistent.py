@@ -14,10 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """
 Example Airflow DAG for Dataproc batch operators.
 """
+from __future__ import annotations
 
 import os
 from datetime import datetime
@@ -34,7 +34,7 @@ from airflow.utils.trigger_rule import TriggerRule
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
 DAG_ID = "dataproc_batch_ps"
-PROJECT_ID = os.environ.get("SYSTEM_TESTS_GCP_PROJECT", "")
+PROJECT_ID = os.environ.get("SYSTEM_TESTS_GCP_PROJECT")
 BUCKET_NAME = f"bucket_{DAG_ID}_{ENV_ID}"
 REGION = "europe-west1"
 CLUSTER_NAME = f"dataproc-cluster-ps-{ENV_ID}"
@@ -68,7 +68,7 @@ BATCH_CONFIG_WITH_PHS = {
 
 with models.DAG(
     DAG_ID,
-    schedule_interval='@once',
+    schedule="@once",
     start_date=datetime(2021, 1, 1),
     catchup=False,
     tags=["example", "dataproc"],

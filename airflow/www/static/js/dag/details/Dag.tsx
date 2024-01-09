@@ -45,7 +45,7 @@ import {
 } from "src/utils";
 import { useGridData, useDagDetails } from "src/api";
 import Time from "src/components/Time";
-import ViewScheduleInterval from "src/components/ViewScheduleInterval";
+import ViewTimeDelta from "src/components/ViewTimeDelta";
 import type { TaskState } from "src/types";
 
 import type { DAG, DAGDetail } from "src/types/api-generated";
@@ -66,7 +66,7 @@ const Dag = () => {
   const { data: dagDetailsData, isLoading: isLoadingDagDetails } =
     useDagDetails();
 
-  // fields to exclude from "dagDetailsData" since handled seprately or not required
+  // fields to exclude from "dagDetailsData" since handled separately or not required
   const dagDataExcludeFields = [
     "defaultView",
     "fileToken",
@@ -74,6 +74,7 @@ const Dag = () => {
     "tags",
     "owners",
     "params",
+    "dagRunTimeout",
   ];
 
   const listParams = new URLSearchParamsWrapper({
@@ -129,8 +130,14 @@ const Dag = () => {
   const lastStart = dagRuns[dagRuns.length - 1]?.startDate;
 
   // parse value for each key if date or not
+  // check "!Number.isNaN(value)" is needed due to
+  // Date.parse() sometimes returning valid date's timestamp for numbers.
   const parseStringData = (value: string) =>
-    Number.isNaN(Date.parse(value)) ? value : <Time dateTime={value} />;
+    Number.isNaN(Date.parse(value)) || !Number.isNaN(value) ? (
+      value
+    ) : (
+      <Time dateTime={value} />
+    );
 
   // render dag and dag_details data
   const renderDagDetailsData = (
@@ -282,11 +289,24 @@ const Dag = () => {
                     <Text>{dagDetailsData.scheduleInterval?.value}</Text>
                   ) : (
                     // for TimeDelta and RelativeDelta
-                    <ViewScheduleInterval
+                    <ViewTimeDelta
                       data={omit(dagDetailsData.scheduleInterval, [
                         "type",
                         "value",
                       ])}
+                    />
+                  )}
+                </Td>
+              </Tr>
+              <Tr>
+                <Td>Dag run timeout</Td>
+                <Td>
+                  {dagDetailsData.dagRunTimeout?.type === undefined ? (
+                    <Text>null</Text>
+                  ) : (
+                    // for TimeDelta and RelativeDelta
+                    <ViewTimeDelta
+                      data={omit(dagDetailsData.dagRunTimeout, ["type"])}
                     />
                   )}
                 </Td>

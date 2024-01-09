@@ -20,7 +20,8 @@ import os
 
 import click
 
-from airflow_breeze.utils.common_options import option_answer
+from airflow_breeze.commands.common_options import option_answer
+from airflow_breeze.commands.release_management_group import release_management
 from airflow_breeze.utils.confirm import confirm_action
 from airflow_breeze.utils.console import console_print
 from airflow_breeze.utils.path_utils import AIRFLOW_SOURCES_ROOT
@@ -137,6 +138,7 @@ def instruction_update_version_branch(version_branch):
 def create_constraints(version_branch):
     if confirm_action("Do you want to create branches from the constraints main?"):
         run_command(["git", "checkout", "constraints-main"], dry_run_override=DRY_RUN, check=True)
+        run_command(["git", "pull", "origin", "constraints-main"], dry_run_override=DRY_RUN, check=True)
         run_command(
             ["git", "checkout", "-b", f"constraints-{version_branch}"], dry_run_override=DRY_RUN, check=True
         )
@@ -148,10 +150,9 @@ def create_constraints(version_branch):
             )
 
 
-@click.command(
+@release_management.command(
     name="create-minor-branch",
     help="Create a new version branch and update the default branches in main",
-    hidden=True,
 )
 @click.option("--version-branch", help="The version branch you want to create e.g 2-4", required=True)
 @option_answer

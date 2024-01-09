@@ -15,11 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 ---
-version: "3.7"
 services:
   airflow:
     stdin_open: true  # docker run -i
     tty: true  # docker run -t
+    environment:
+      - AIRFLOW__CORE__PLUGINS_FOLDER=/files/plugins
     # We need to mount files and directories individually because some files
     # such apache_airflow.egg-info should not be mounted from host
     # we only mount those files, so that it makes sense to edit while developing
@@ -36,9 +37,6 @@ services:
       - type: bind
         source: ../../../.build
         target: /opt/airflow/.build
-      - type: bind
-        source: ../../../.coveragerc
-        target: /opt/airflow/.coveragerc
       - type: bind
         source: ../../../.dockerignore
         target: /opt/airflow/.dockerignore
@@ -72,9 +70,6 @@ services:
       - type: bind
         source: ../../../constraints
         target: /opt/airflow/constraints
-      - type: bind
-        source: ../../../provider_packages
-        target: /opt/airflow/provider_packages
       - type: bind
         source: ../../../dags
         target: /opt/airflow/dags
@@ -114,6 +109,9 @@ services:
       - type: bind
         source: ../../../tests
         target: /opt/airflow/tests
+      - type: bind
+        source: ../../../helm_tests
+        target: /opt/airflow/helm_tests
       - type: bind
         source: ../../../kubernetes_tests
         target: /opt/airflow/kubernetes_tests

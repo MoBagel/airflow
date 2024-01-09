@@ -43,6 +43,10 @@ There are three main types of cluster policy:
 The DAG and Task cluster policies can raise the  :class:`~airflow.exceptions.AirflowClusterPolicyViolation`
 exception to indicate that the dag/task they were passed is not compliant and should not be loaded.
 
+They can also raise the :class:`~airflow.exceptions.AirflowClusterPolicySkipDag` exception
+when skipping that DAG is needed intentionally. Unlike :class:`~airflow.exceptions.AirflowClusterPolicyViolation`,
+this exception is not displayed on the Airflow web UI (Internally, it's not recorded on ``import_error`` table on meta database.)
+
 Any extra attributes set by a cluster policy take priority over those defined in your DAG file; for example,
 if you set an ``sla`` on your Task in the DAG file, and then your cluster policy also sets an ``sla``, the
 cluster policy's value will take precedence.
@@ -62,8 +66,6 @@ There are two ways to configure cluster policies:
    in a custom module using the `Pluggy <https://pluggy.readthedocs.io/en/stable/>`_ interface.
 
    .. versionadded:: 2.6
-
-   .. note:: |experimental|
 
    This method is more advanced and for people who are already comfortable with python packaging.
 

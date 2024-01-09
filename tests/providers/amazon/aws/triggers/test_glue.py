@@ -21,21 +21,22 @@ from unittest import mock
 
 import pytest
 
-from airflow import AirflowException
+from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.glue import GlueJobHook
-from airflow.providers.amazon.aws.triggers.glue import GlueJobCompleteTrigger
+from airflow.providers.amazon.aws.hooks.glue_catalog import GlueCatalogHook
+from airflow.providers.amazon.aws.triggers.glue import GlueCatalogPartitionTrigger, GlueJobCompleteTrigger
 
 
 class TestGlueJobTrigger:
     @pytest.mark.asyncio
     @mock.patch.object(GlueJobHook, "async_get_job_state")
     async def test_wait_job(self, get_state_mock: mock.MagicMock):
-        GlueJobHook.JOB_POLL_INTERVAL = 0.1
         trigger = GlueJobCompleteTrigger(
             job_name="job_name",
             run_id="JobRunId",
             verbose=False,
             aws_conn_id="aws_conn_id",
+            job_poll_interval=0.1,
         )
         get_state_mock.side_effect = [
             "RUNNING",
@@ -44,7 +45,7 @@ class TestGlueJobTrigger:
         ]
 
         generator = trigger.run()
-        event = await generator.asend(None)
+        event = await generator.asend(None)  # type:ignore[attr-defined]
 
         assert get_state_mock.call_count == 3
         assert event.payload["status"] == "success"
@@ -52,12 +53,12 @@ class TestGlueJobTrigger:
     @pytest.mark.asyncio
     @mock.patch.object(GlueJobHook, "async_get_job_state")
     async def test_wait_job_failed(self, get_state_mock: mock.MagicMock):
-        GlueJobHook.JOB_POLL_INTERVAL = 0.1
         trigger = GlueJobCompleteTrigger(
             job_name="job_name",
             run_id="JobRunId",
             verbose=False,
             aws_conn_id="aws_conn_id",
+            job_poll_interval=0.1,
         )
         get_state_mock.side_effect = [
             "RUNNING",
@@ -66,6 +67,24 @@ class TestGlueJobTrigger:
         ]
 
         with pytest.raises(AirflowException):
-            await trigger.run().asend(None)
+            await trigger.run().asend(None)  # type:ignore[attr-defined]
 
         assert get_state_mock.call_count == 3
+
+
+class TestGlueCatalogPartitionSensorTrigger:
+    @pytest.mark.asyncio
+    @mock.patch.object(GlueCatalogHook, "async_get_partitions")
+    async def test_poke(self, mock_async_get_partitions):
+        a_mock = mock.AsyncMock()
+        a_mock.return_value = True
+        mock_async_get_partitions.return_value = a_mock
+        trigger = GlueCatalogPartitionTrigger(
+            database_name="my_database",
+            table_name="my_table",
+            expression="my_expression",
+            aws_conn_id="my_conn_id",
+        )
+        response = await trigger.poke(client=mock.MagicMock())
+
+        assert response is True

@@ -25,10 +25,21 @@ from airflow.security import permissions
 from tests.test_utils.api_connexion_utils import assert_401, create_user, delete_user
 from tests.test_utils.config import conf_vars
 
+pytestmark = pytest.mark.db_test
+
+
 MOCK_CONF = {
     "core": {
         "parallelism": "1024",
     },
+    "smtp": {
+        "smtp_host": "localhost",
+        "smtp_mail_from": "airflow@example.com",
+    },
+}
+
+MOCK_CONF_WITH_SENSITIVE_VALUE = {
+    "core": {"parallelism": "1024", "sql_alchemy_conn": "mock_conn"},
     "smtp": {
         "smtp_host": "localhost",
         "smtp_mail_from": "airflow@example.com",
@@ -65,6 +76,27 @@ class TestGetConfig:
         response = self.client.get(
             "/api/v1/config", headers={"Accept": "text/plain"}, environ_overrides={"REMOTE_USER": "test"}
         )
+        mock_as_dict.assert_called_with(display_source=False, display_sensitive=True)
+        assert response.status_code == 200
+        expected = textwrap.dedent(
+            """\
+        [core]
+        parallelism = 1024
+
+        [smtp]
+        smtp_host = localhost
+        smtp_mail_from = airflow@example.com
+        """
+        )
+        assert expected == response.data.decode()
+
+    @patch("airflow.api_connexion.endpoints.config_endpoint.conf.as_dict", return_value=MOCK_CONF)
+    @conf_vars({("webserver", "expose_config"): "non-sensitive-only"})
+    def test_should_respond_200_text_plain_with_non_sensitive_only(self, mock_as_dict):
+        response = self.client.get(
+            "/api/v1/config", headers={"Accept": "text/plain"}, environ_overrides={"REMOTE_USER": "test"}
+        )
+        mock_as_dict.assert_called_with(display_source=False, display_sensitive=False)
         assert response.status_code == 200
         expected = textwrap.dedent(
             """\
@@ -85,6 +117,7 @@ class TestGetConfig:
             headers={"Accept": "application/json"},
             environ_overrides={"REMOTE_USER": "test"},
         )
+        mock_as_dict.assert_called_with(display_source=False, display_sensitive=True)
         assert response.status_code == 200
         expected = {
             "sections": [
@@ -112,6 +145,7 @@ class TestGetConfig:
             headers={"Accept": "text/plain"},
             environ_overrides={"REMOTE_USER": "test"},
         )
+        mock_as_dict.assert_called_with(display_source=False, display_sensitive=True)
         assert response.status_code == 200
         expected = textwrap.dedent(
             """\
@@ -129,6 +163,7 @@ class TestGetConfig:
             headers={"Accept": "application/json"},
             environ_overrides={"REMOTE_USER": "test"},
         )
+        mock_as_dict.assert_called_with(display_source=False, display_sensitive=True)
         assert response.status_code == 200
         expected = {
             "sections": [
@@ -206,6 +241,35 @@ class TestGetValue:
             """\
         [smtp]
         smtp_mail_from = airflow@example.com
+        """
+        )
+        assert expected == response.data.decode()
+
+    @patch(
+        "airflow.api_connexion.endpoints.config_endpoint.conf.as_dict",
+        return_value=MOCK_CONF_WITH_SENSITIVE_VALUE,
+    )
+    @conf_vars({("webserver", "expose_config"): "non-sensitive-only"})
+    @pytest.mark.parametrize(
+        "section, option",
+        [
+            ("core", "sql_alchemy_conn"),
+            ("core", "SQL_ALCHEMY_CONN"),
+            ("corE", "sql_alchemy_conn"),
+            ("CORE", "sql_alchemy_conn"),
+        ],
+    )
+    def test_should_respond_200_text_plain_with_non_sensitive_only(self, mock_as_dict, section, option):
+        response = self.client.get(
+            f"/api/v1/config/section/{section}/option/{option}",
+            headers={"Accept": "text/plain"},
+            environ_overrides={"REMOTE_USER": "test"},
+        )
+        assert response.status_code == 200
+        expected = textwrap.dedent(
+            f"""\
+        [{section}]
+        {option} = < hidden >
         """
         )
         assert expected == response.data.decode()

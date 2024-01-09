@@ -17,6 +17,8 @@
 # under the License.
 from __future__ import annotations
 
+from typing import Any
+
 from opsgenie_sdk import (
     AlertApi,
     ApiClient,
@@ -33,6 +35,7 @@ from airflow.hooks.base import BaseHook
 class OpsgenieAlertHook(BaseHook):
     """
     This hook allows you to post alerts to Opsgenie.
+
     Accepts a connection that has an Opsgenie API key as the connection's password.
     This hook sets the domain to conn_id.host, and if not set will default
     to ``https://api.opsgenie.com``.
@@ -155,3 +158,11 @@ class OpsgenieAlertHook(BaseHook):
         except OpenApiException as e:
             self.log.exception("Exception when calling AlertApi->delete_alert: %s\n", e)
             raise e
+
+    @classmethod
+    def get_ui_field_behaviour(cls) -> dict[str, Any]:
+        """Returns custom field behaviour."""
+        return {
+            "hidden_fields": ["port", "schema", "login", "extra"],
+            "relabeling": {"password": "Opsgenie API Key"},
+        }

@@ -19,29 +19,22 @@ from __future__ import annotations
 
 import datetime
 from functools import reduce
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 from unittest import mock
 from unittest.mock import call
 
 import pendulum
 import pytest
-from sqlalchemy.orm.session import Session
 
 from airflow import settings
 from airflow.callbacks.callback_requests import DagCallbackRequest
 from airflow.decorators import setup, task, task_group, teardown
-from airflow.models import (
-    DAG,
-    DagBag,
-    DagModel,
-    DagRun,
-    TaskInstance,
-    TaskInstance as TI,
-    clear_task_instances,
-)
+from airflow.exceptions import AirflowException
 from airflow.models.baseoperator import BaseOperator
-from airflow.models.dagrun import DagRunNote
-from airflow.models.taskinstance import TaskInstanceNote
+from airflow.models.dag import DAG, DagModel
+from airflow.models.dagbag import DagBag
+from airflow.models.dagrun import DagRun, DagRunNote
+from airflow.models.taskinstance import TaskInstance, TaskInstanceNote, clear_task_instances
 from airflow.models.taskmap import TaskMap
 from airflow.models.taskreschedule import TaskReschedule
 from airflow.operators.empty import EmptyOperator
@@ -54,8 +47,16 @@ from airflow.utils.trigger_rule import TriggerRule
 from airflow.utils.types import DagRunType
 from tests.models import DEFAULT_DATE as _DEFAULT_DATE
 from tests.test_utils import db
+from tests.test_utils.config import conf_vars
 from tests.test_utils.mock_operators import MockOperator
 
+pytestmark = pytest.mark.db_test
+
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm.session import Session
+
+TI = TaskInstance
 DEFAULT_DATE = pendulum.instance(_DEFAULT_DATE)
 
 
@@ -89,9 +90,7 @@ class TestDagRun:
         session: Session,
     ):
         now = timezone.utcnow()
-        if execution_date is None:
-            execution_date = now
-        execution_date = pendulum.instance(execution_date)
+        execution_date = pendulum.instance(execution_date or now)
         if is_backfill:
             run_type = DagRunType.BACKFILL_JOB
             data_interval = dag.infer_automated_data_interval(execution_date)
@@ -132,6 +131,7 @@ class TestDagRun:
         ti0.refresh_from_db()
         dr0 = session.query(DagRun).filter(DagRun.dag_id == dag_id, DagRun.execution_date == now).first()
         assert dr0.state == state
+        assert dr0.clear_number < 1
 
     @pytest.mark.parametrize("state", [DagRunState.SUCCESS, DagRunState.FAILED])
     def test_clear_task_instances_for_backfill_finished_dagrun(self, state, session):
@@ -150,6 +150,7 @@ class TestDagRun:
         ti0.refresh_from_db()
         dr0 = session.query(DagRun).filter(DagRun.dag_id == dag_id, DagRun.execution_date == now).first()
         assert dr0.state == DagRunState.QUEUED
+        assert dr0.clear_number == 1
 
     def test_dagrun_find(self, session):
         now = timezone.utcnow()
@@ -334,8 +335,8 @@ class TestDagRun:
         dr.update_state(session=session)
         assert dr.state == DagRunState.FAILED
 
-    def test_dagrun_no_deadlock_with_shutdown(self, session):
-        dag = DAG("test_dagrun_no_deadlock_with_shutdown", start_date=DEFAULT_DATE)
+    def test_dagrun_no_deadlock_with_restarting(self, session):
+        dag = DAG("test_dagrun_no_deadlock_with_restarting", start_date=DEFAULT_DATE)
         with dag:
             op1 = EmptyOperator(task_id="upstream_task")
             op2 = EmptyOperator(task_id="downstream_task")
@@ -349,7 +350,7 @@ class TestDagRun:
             start_date=DEFAULT_DATE,
         )
         upstream_ti = dr.get_task_instance(task_id="upstream_task")
-        upstream_ti.set_state(TaskInstanceState.SHUTDOWN, session=session)
+        upstream_ti.set_state(TaskInstanceState.RESTARTING, session=session)
 
         dr.update_state()
         assert dr.state == DagRunState.RUNNING
@@ -984,7 +985,7 @@ def test_verify_integrity_task_start_and_end_date(Stats_incr, session, run_type,
     assert len(tis) == expected_tis
 
     Stats_incr.assert_any_call(
-        "task_instance_created-EmptyOperator", expected_tis, tags={"dag_id": "test", "run_type": run_type}
+        "task_instance_created_EmptyOperator", expected_tis, tags={"dag_id": "test", "run_type": run_type}
     )
     Stats_incr.assert_any_call(
         "task_instance_created",
@@ -1704,7 +1705,7 @@ def test_calls_to_verify_integrity_with_mapped_task_zero_length_at_runtime(dag_m
         (1, State.NONE),
         (2, State.NONE),
     ]
-    ti1 = [i for i in tis if i.map_index == 0][0]
+    ti1 = next(i for i in tis if i.map_index == 0)
     # Now "clear" and "reduce" the length to empty list
     dag.clear()
     Variable.set(key="arg1", value=[])
@@ -1809,6 +1810,52 @@ def test_mapped_task_group_expands_at_create(dag_maker, session):
     ]
 
 
+def test_mapped_task_group_empty_operator(dag_maker, session):
+    """
+    Test that dynamic task inside a dynamic task group only marks
+    the corresponding downstream EmptyOperator as success.
+    """
+
+    literal = [1, 2, 3]
+
+    with dag_maker(session=session) as dag:
+
+        @task_group
+        def tg(x):
+            @task
+            def t1(x):
+                return x
+
+            t2 = EmptyOperator(task_id="t2")
+
+            @task
+            def t3(x):
+                return x
+
+            t1(x) >> t2 >> t3(x)
+
+        tg.expand(x=literal)
+
+    dr = dag_maker.create_dagrun()
+
+    t2_task = dag.get_task("tg.t2")
+    t2_0 = dr.get_task_instance(task_id="tg.t2", map_index=0)
+    t2_0.refresh_from_task(t2_task)
+    assert t2_0.state is None
+
+    t2_1 = dr.get_task_instance(task_id="tg.t2", map_index=1)
+    t2_1.refresh_from_task(t2_task)
+    assert t2_1.state is None
+
+    dr.schedule_tis([t2_0])
+
+    t2_0 = dr.get_task_instance(task_id="tg.t2", map_index=0)
+    assert t2_0.state == TaskInstanceState.SUCCESS
+
+    t2_1 = dr.get_task_instance(task_id="tg.t2", map_index=1)
+    assert t2_1.state is None
+
+
 def test_ti_scheduling_mapped_zero_length(dag_maker, session):
     with dag_maker(session=session):
         task = BaseOperator(task_id="task_1")
@@ -1846,7 +1893,7 @@ def test_mapped_task_upstream_failed(dag_maker, session, trigger_rule):
 
         @dag.task
         def make_list():
-            return list(map(lambda a: f'echo "{a!r}"', [1, 2, {"a": "b"}]))
+            return [f'echo "{a!r}"' for a in [1, 2, {"a": "b"}]]
 
         def consumer(*args):
             print(repr(args))
@@ -2512,7 +2559,7 @@ def test_tis_considered_for_state(dag_maker, session, input, expected):
     def work_task():
         print(1)
 
-    @task
+    @setup
     def setup_task():
         print(1)
 
@@ -2541,3 +2588,33 @@ def test_tis_considered_for_state(dag_maker, session, input, expected):
     tis = dr.task_instance_scheduling_decisions(session).tis
     tis_for_state = {x.task_id for x in dr._tis_for_dagrun_state(dag=dag, tis=tis)}
     assert tis_for_state == expected
+
+
+@pytest.mark.parametrize(
+    "pattern, run_id, result",
+    [
+        ["^[A-Z]", "ABC", True],
+        ["^[A-Z]", "abc", False],
+        ["^[0-9]", "123", True],
+        # The below params tests that user configuration does not affect internally generated
+        # run_ids
+        ["", "scheduled__2023-01-01T00:00:00+00:00", True],
+        ["", "manual__2023-01-01T00:00:00+00:00", True],
+        ["", "dataset_triggered__2023-01-01T00:00:00+00:00", True],
+        ["", "scheduled_2023-01-01T00", False],
+        ["", "manual_2023-01-01T00", False],
+        ["", "dataset_triggered_2023-01-01T00", False],
+        ["^[0-9]", "scheduled__2023-01-01T00:00:00+00:00", True],
+        ["^[0-9]", "manual__2023-01-01T00:00:00+00:00", True],
+        ["^[a-z]", "dataset_triggered__2023-01-01T00:00:00+00:00", True],
+    ],
+)
+def test_dag_run_id_config(session, dag_maker, pattern, run_id, result):
+    with conf_vars({("scheduler", "allowed_run_id_pattern"): pattern}):
+        with dag_maker():
+            ...
+        if result:
+            dag_maker.create_dagrun(run_id=run_id)
+        else:
+            with pytest.raises(AirflowException):
+                dag_maker.create_dagrun(run_id=run_id)

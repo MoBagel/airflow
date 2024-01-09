@@ -105,7 +105,7 @@ There are two main ways to declare individual task dependencies. The recommended
 
 Or, you can also use the more explicit ``set_upstream`` and ``set_downstream`` methods::
 
-    first_task.set_downstream(second_task, third_task)
+    first_task.set_downstream([second_task, third_task])
     third_task.set_upstream(fourth_task)
 
 There are also shortcuts to declaring more complex dependencies. If you want to make two lists of tasks depend on all parts of each other, you can't use either of the approaches above, so you need to use ``cross_downstream``::
@@ -299,11 +299,11 @@ Control Flow
 
 By default, a DAG will only run a Task when all the Tasks it depends on are successful. There are several ways of modifying this, however:
 
-* :ref:`concepts:branching`, where you can select which Task to move onto based on a condition
-* :ref:`concepts:latest-only`, a special form of branching that only runs on DAGs running against the present
-* :ref:`concepts:depends-on-past`, where tasks can depend on themselves *from a previous run*
-* :ref:`concepts:trigger-rules`, which let you set the conditions under which a DAG will run a task.
-
+* :ref:`concepts:branching` - select which Task to move onto based on a condition
+* :ref:`concepts:trigger-rules` - set the conditions under which a DAG will run a task
+* :doc:`/howto/setup-and-teardown` - define setup and teardown relationships
+* :ref:`concepts:latest-only` - a special form of branching that only runs on DAGs running against the present
+* :ref:`concepts:depends-on-past` - tasks can depend on themselves *from a previous run*
 
 .. _concepts:branching:
 
@@ -341,7 +341,7 @@ The ``@task.branch`` can also be used with XComs allowing branching context to d
     start_op = BashOperator(
         task_id="start_task",
         bash_command="echo 5",
-        xcom_push=True,
+        do_xcom_push=True,
         dag=dag,
     )
 
@@ -370,6 +370,8 @@ As with the callable for ``@task.branch``, this method can return the ID of a do
                 return 'daily_task_id'
             else:
                 return None
+
+Similar like ``@task.branch`` decorator for regular Python code there are also branch decorators which use a virtual environment called ``@task.branch_virtualenv`` or external python called ``@task.branch_external_python``.
 
 
 .. _concepts:latest-only:
@@ -484,6 +486,14 @@ You can also combine this with the :ref:`concepts:depends-on-past` functionality
     .. image:: /img/branch_with_trigger.png
 
 
+Setup and teardown
+------------------
+
+In data workflows it's common to create a resource (such as a compute resource), use it to do some work, and then tear it down. Airflow provides setup and teardown tasks to support this need.
+
+Please see main article :doc:`/howto/setup-and-teardown` for details on how to use this feature.
+
+
 Dynamic DAGs
 ------------
 
@@ -495,7 +505,6 @@ For example, here is a DAG that uses a ``for`` loop to define some tasks:
    :emphasize-lines: 7
 
     with DAG("loop_example", ...):
-
         first = EmptyOperator(task_id="first")
         last = EmptyOperator(task_id="last")
 
@@ -669,6 +678,11 @@ This is especially useful if your tasks are built dynamically from configuration
 SubDAGs
 -------
 
+.. note::
+
+    SubDAG is deprecated hence TaskGroup is always the preferred choice.
+
+
 Sometimes, you will find that you are regularly adding exactly the same set of tasks to every DAG, or you want to group a lot of tasks into a single, logical unit. This is what SubDAGs are for.
 
 For example, here's a DAG that has a lot of parallel tasks in two sections:
@@ -746,10 +760,6 @@ You can see the core differences between these two constructs.
 | Simple construct declaration with context manager      |  Complex DAG factory with naming restrictions          |
 +--------------------------------------------------------+--------------------------------------------------------+
 
-.. note::
-
-    SubDAG is deprecated hence TaskGroup is always the preferred choice.
-
 
 
 Packaging DAGs
@@ -791,6 +801,10 @@ specifies a regular expression pattern, and directories or files whose names (no
 match any of the patterns would be ignored (under the hood, ``Pattern.search()`` is used
 to match the pattern). Use the ``#`` character to indicate a comment; all characters
 on a line following a ``#`` will be ignored.
+
+As with most regexp matching in Airflow, the regexp engine is ``re2``, which explicitly
+doesn't support many advanced features, please check its
+`documentation <https://github.com/google/re2/wiki/Syntax>`_ for more information.
 
 With the ``glob`` syntax, the patterns work just like those in a ``.gitignore`` file:
 
@@ -861,7 +875,10 @@ Dag can be paused via UI when it is present in the ``DAGS_FOLDER``, and schedule
 the database, but the user chose to disable it via the UI. The "pause" and "unpause" actions are available
 via UI and API. Paused DAG is not scheduled by the Scheduler, but you can trigger them via UI for
 manual runs. In the UI, you can see Paused DAGs (in ``Paused`` tab). The DAGs that are un-paused
-can be found in the ``Active`` tab.
+can be found in the ``Active`` tab. When a DAG is paused, any running tasks are allowed to complete and all
+downstream tasks are put in to a state of "Scheduled". When the DAG is unpaused, any "scheduled" tasks will
+begin running according to the DAG logic. DAGs with no "scheduled" tasks will begin running according to
+their schedule.
 
 Dag can be deactivated (do not confuse it with ``Active`` tag in the UI) by removing them from the
 ``DAGS_FOLDER``. When scheduler parses the ``DAGS_FOLDER`` and misses the DAG that it had seen

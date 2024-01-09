@@ -20,7 +20,8 @@ from __future__ import annotations
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Sequence
 
-from airflow.exceptions import AirflowException
+from airflow.configuration import conf
+from airflow.exceptions import AirflowException, AirflowSkipException
 from airflow.providers.amazon.aws.hooks.ec2 import EC2Hook
 from airflow.providers.amazon.aws.triggers.ec2 import EC2StateSensorTrigger
 from airflow.sensors.base import BaseSensorOperator
@@ -31,8 +32,7 @@ if TYPE_CHECKING:
 
 class EC2InstanceStateSensor(BaseSensorOperator):
     """
-    Check the state of the AWS EC2 instance until
-    state of the instance become equal to the target state.
+    Poll the state of the AWS EC2 instance until the instance reaches the target state.
 
     .. seealso::
         For more information on how to use this sensor, take a look at the guide:
@@ -56,7 +56,7 @@ class EC2InstanceStateSensor(BaseSensorOperator):
         instance_id: str,
         aws_conn_id: str = "aws_default",
         region_name: str | None = None,
-        deferrable: bool = False,
+        deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         **kwargs,
     ):
         if target_state not in self.valid_states:
@@ -94,5 +94,9 @@ class EC2InstanceStateSensor(BaseSensorOperator):
 
     def execute_complete(self, context, event=None):
         if event["status"] != "success":
-            raise AirflowException(f"Error: {event}")
+            # TODO: remove this if check when min_airflow_version is set to higher than 2.7.1
+            message = f"Error: {event}"
+            if self.soft_fail:
+                raise AirflowSkipException(message)
+            raise AirflowException(message)
         return

@@ -21,17 +21,21 @@ import os
 import warnings
 from contextlib import closing
 from copy import deepcopy
-from typing import Any, Iterable, Union
+from typing import TYPE_CHECKING, Any, Iterable, Union
 
 import psycopg2
 import psycopg2.extensions
 import psycopg2.extras
-from psycopg2.extensions import connection
 from psycopg2.extras import DictCursor, NamedTupleCursor, RealDictCursor
 
 from airflow.exceptions import AirflowProviderDeprecationWarning
-from airflow.models.connection import Connection
 from airflow.providers.common.sql.hooks.sql import DbApiHook
+
+if TYPE_CHECKING:
+    from psycopg2.extensions import connection
+
+    from airflow.models.connection import Connection
+    from airflow.providers.openlineage.sqlparser import DatabaseInfo
 
 CursorType = Union[DictCursor, RealDictCursor, NamedTupleCursor]
 
@@ -59,6 +63,9 @@ class PostgresHook(DbApiHook):
 
     :param postgres_conn_id: The :ref:`postgres conn id <howto/connection:postgres>`
         reference to a specific postgres database.
+    :param options: Optional. Specifies command-line options to send to the server
+        at connection start. For example, setting this to ``-c search_path=myschema``
+        sets the session's value of the ``search_path`` to ``myschema``.
     """
 
     conn_name_attr = "postgres_conn_id"
@@ -67,7 +74,7 @@ class PostgresHook(DbApiHook):
     hook_name = "Postgres"
     supports_autocommit = True
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, options: str | None = None, **kwargs) -> None:
         if "schema" in kwargs:
             warnings.warn(
                 'The "schema" arg has been renamed to "database" as it contained the database name.'
@@ -80,6 +87,7 @@ class PostgresHook(DbApiHook):
         self.connection: Connection | None = kwargs.pop("connection", None)
         self.conn: connection = None
         self.database: str | None = kwargs.pop("database", None)
+        self.options = options
 
     @property
     def schema(self):
@@ -103,13 +111,16 @@ class PostgresHook(DbApiHook):
 
     def _get_cursor(self, raw_cursor: str) -> CursorType:
         _cursor = raw_cursor.lower()
-        if _cursor == "dictcursor":
-            return psycopg2.extras.DictCursor
-        if _cursor == "realdictcursor":
-            return psycopg2.extras.RealDictCursor
-        if _cursor == "namedtuplecursor":
-            return psycopg2.extras.NamedTupleCursor
-        raise ValueError(f"Invalid cursor passed {_cursor}")
+        cursor_types = {
+            "dictcursor": psycopg2.extras.DictCursor,
+            "realdictcursor": psycopg2.extras.RealDictCursor,
+            "namedtuplecursor": psycopg2.extras.NamedTupleCursor,
+        }
+        if _cursor in cursor_types:
+            return cursor_types[_cursor]
+        else:
+            valid_cursors = ", ".join(cursor_types.keys())
+            raise ValueError(f"Invalid cursor passed {_cursor}. Valid options are: {valid_cursors}")
 
     def get_conn(self) -> connection:
         """Establishes a connection to a postgres database."""
@@ -120,16 +131,19 @@ class PostgresHook(DbApiHook):
         if conn.extra_dejson.get("iam", False):
             conn.login, conn.password, conn.port = self.get_iam_token(conn)
 
-        conn_args = dict(
-            host=conn.host,
-            user=conn.login,
-            password=conn.password,
-            dbname=self.database or conn.schema,
-            port=conn.port,
-        )
+        conn_args = {
+            "host": conn.host,
+            "user": conn.login,
+            "password": conn.password,
+            "dbname": self.database or conn.schema,
+            "port": conn.port,
+        }
         raw_cursor = conn.extra_dejson.get("cursor", False)
         if raw_cursor:
             conn_args["cursor_factory"] = self._get_cursor(raw_cursor)
+
+        if self.options:
+            conn_args["options"] = self.options
 
         for arg_name, arg_val in conn.extra_dejson.items():
             if arg_name not in [
@@ -160,12 +174,10 @@ class PostgresHook(DbApiHook):
             with open(filename, "w"):
                 pass
 
-        with open(filename, "r+") as file:
-            with closing(self.get_conn()) as conn:
-                with closing(conn.cursor()) as cur:
-                    cur.copy_expert(sql, file)
-                    file.truncate(file.tell())
-                    conn.commit()
+        with open(filename, "r+") as file, closing(self.get_conn()) as conn, closing(conn.cursor()) as cur:
+            cur.copy_expert(sql, file)
+            file.truncate(file.tell())
+            conn.commit()
 
     def get_uri(self) -> str:
         """Extract the URI from the connection.
@@ -263,9 +275,8 @@ class PostgresHook(DbApiHook):
         pk_columns = [row[0] for row in self.get_records(sql, (schema, table))]
         return pk_columns or None
 
-    @classmethod
     def _generate_insert_sql(
-        cls, table: str, values: tuple[str, ...], target_fields: Iterable[str], replace: bool, **kwargs
+        self, table: str, values: tuple[str, ...], target_fields: Iterable[str], replace: bool, **kwargs
     ) -> str:
         """Generate the INSERT SQL statement.
 
@@ -280,7 +291,7 @@ class PostgresHook(DbApiHook):
         :return: The generated INSERT or REPLACE SQL statement
         """
         placeholders = [
-            cls.placeholder,
+            self.placeholder,
         ] * len(values)
         replace_index = kwargs.get("replace_index")
 
@@ -310,3 +321,57 @@ class PostgresHook(DbApiHook):
                 sql += f"{on_conflict_str} DO NOTHING"
 
         return sql
+
+    def get_openlineage_database_info(self, connection) -> DatabaseInfo:
+        """Returns Postgres/Redshift specific information for OpenLineage."""
+        from airflow.providers.openlineage.sqlparser import DatabaseInfo
+
+        is_redshift = connection.extra_dejson.get("redshift", False)
+
+        if is_redshift:
+            authority = self._get_openlineage_redshift_authority_part(connection)
+        else:
+            authority = DbApiHook.get_openlineage_authority_part(  # type: ignore[attr-defined]
+                connection, default_port=5432
+            )
+
+        return DatabaseInfo(
+            scheme="postgres" if not is_redshift else "redshift",
+            authority=authority,
+            database=self.database or connection.schema,
+        )
+
+    def _get_openlineage_redshift_authority_part(self, connection) -> str:
+        try:
+            from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
+        except ImportError:
+            from airflow.exceptions import AirflowException
+
+            raise AirflowException(
+                "apache-airflow-providers-amazon not installed, run: "
+                "pip install 'apache-airflow-providers-postgres[amazon]'."
+            )
+        aws_conn_id = connection.extra_dejson.get("aws_conn_id", "aws_default")
+
+        port = connection.port or 5439
+        cluster_identifier = connection.extra_dejson.get("cluster-identifier", connection.host.split(".")[0])
+        region_name = AwsBaseHook(aws_conn_id=aws_conn_id).region_name
+
+        return f"{cluster_identifier}.{region_name}:{port}"
+
+    def get_openlineage_database_dialect(self, connection) -> str:
+        """Returns postgres/redshift dialect."""
+        return "redshift" if connection.extra_dejson.get("redshift", False) else "postgres"
+
+    def get_openlineage_default_schema(self) -> str | None:
+        """Returns current schema. This is usually changed with ``SEARCH_PATH`` parameter."""
+        return self.get_first("SELECT CURRENT_SCHEMA;")[0]
+
+    @classmethod
+    def get_ui_field_behaviour(cls) -> dict[str, Any]:
+        return {
+            "hidden_fields": [],
+            "relabeling": {
+                "schema": "Database",
+            },
+        }

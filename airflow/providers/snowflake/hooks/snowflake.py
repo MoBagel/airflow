@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import os
 from contextlib import closing, contextmanager
-from functools import wraps
 from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, TypeVar, overload
+from urllib.parse import urlparse
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -31,40 +31,20 @@ from snowflake.connector import DictCursor, SnowflakeConnection, util_text
 from snowflake.sqlalchemy import URL
 from sqlalchemy import create_engine
 
-from airflow import AirflowException
+from airflow.exceptions import AirflowException
 from airflow.providers.common.sql.hooks.sql import DbApiHook, return_single_query_results
 from airflow.utils.strings import to_boolean
+
+T = TypeVar("T")
+if TYPE_CHECKING:
+    from airflow.providers.openlineage.extractors import OperatorLineage
+    from airflow.providers.openlineage.sqlparser import DatabaseInfo
 
 
 def _try_to_boolean(value: Any):
     if isinstance(value, (str, type(None))):
         return to_boolean(value)
     return value
-
-
-# TODO: Remove this when provider min airflow version >= 2.5.0 since this is
-# handled by provider manager from that version.
-def _ensure_prefixes(conn_type):
-    def dec(func):
-        @wraps(func)
-        def inner():
-            field_behaviors = func()
-            conn_attrs = {"host", "schema", "login", "password", "port", "extra"}
-
-            def _ensure_prefix(field):
-                if field not in conn_attrs and not field.startswith("extra__"):
-                    return f"extra__{conn_type}__{field}"
-                else:
-                    return field
-
-            if "placeholders" in field_behaviors:
-                placeholders = field_behaviors["placeholders"]
-                field_behaviors["placeholders"] = {_ensure_prefix(k): v for k, v in placeholders.items()}
-            return field_behaviors
-
-        return inner
-
-    return dec
 
 
 class SnowflakeHook(DbApiHook):
@@ -110,8 +90,8 @@ class SnowflakeHook(DbApiHook):
     supports_autocommit = True
     _test_connection_sql = "select 1"
 
-    @staticmethod
-    def get_connection_form_widgets() -> dict[str, Any]:
+    @classmethod
+    def get_connection_form_widgets(cls) -> dict[str, Any]:
         """Returns connection widgets to add to connection form."""
         from flask_appbuilder.fieldwidgets import BS3TextAreaFieldWidget, BS3TextFieldWidget
         from flask_babel import lazy_gettext
@@ -132,9 +112,8 @@ class SnowflakeHook(DbApiHook):
             ),
         }
 
-    @staticmethod
-    @_ensure_prefixes(conn_type="snowflake")
-    def get_ui_field_behaviour() -> dict[str, Any]:
+    @classmethod
+    def get_ui_field_behaviour(cls) -> dict[str, Any]:
         """Returns custom field behaviour."""
         import json
 
@@ -248,7 +227,12 @@ class SnowflakeHook(DbApiHook):
                 "Please remove one."
             )
         elif private_key_file:
-            private_key_pem = Path(private_key_file).read_bytes()
+            private_key_file_path = Path(private_key_file)
+            if not private_key_file_path.is_file() or private_key_file_path.stat().st_size == 0:
+                raise ValueError("The private_key_file path points to an empty or invalid file.")
+            if private_key_file_path.stat().st_size > 4096:
+                raise ValueError("The private_key_file size is too big. Please keep it less than 4 KB.")
+            private_key_pem = Path(private_key_file_path).read_bytes()
         elif private_key_content:
             private_key_pem = private_key_content.encode()
 
@@ -301,11 +285,11 @@ class SnowflakeHook(DbApiHook):
         engine_kwargs = engine_kwargs or {}
         conn_params = self._get_conn_params()
         if "insecure_mode" in conn_params:
-            engine_kwargs.setdefault("connect_args", dict())
+            engine_kwargs.setdefault("connect_args", {})
             engine_kwargs["connect_args"]["insecure_mode"] = True
         for key in ["session_parameters", "private_key"]:
             if conn_params.get(key):
-                engine_kwargs.setdefault("connect_args", dict())
+                engine_kwargs.setdefault("connect_args", {})
                 engine_kwargs["connect_args"][key] = conn_params[key]
         return create_engine(self._conn_params_to_sqlalchemy_uri(conn_params), **engine_kwargs)
 
@@ -316,16 +300,42 @@ class SnowflakeHook(DbApiHook):
     def get_autocommit(self, conn):
         return getattr(conn, "autocommit_mode", False)
 
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        sql: str | Iterable[str],
+        autocommit: bool = ...,
+        parameters: Iterable | Mapping[str, Any] | None = ...,
+        handler: None = ...,
+        split_statements: bool = ...,
+        return_last: bool = ...,
+        return_dictionaries: bool = ...,
+    ) -> None:
+        ...
+
+    @overload
+    def run(
+        self,
+        sql: str | Iterable[str],
+        autocommit: bool = ...,
+        parameters: Iterable | Mapping[str, Any] | None = ...,
+        handler: Callable[[Any], T] = ...,
+        split_statements: bool = ...,
+        return_last: bool = ...,
+        return_dictionaries: bool = ...,
+    ) -> tuple | list[tuple] | list[list[tuple] | tuple] | None:
+        ...
+
     def run(
         self,
         sql: str | Iterable[str],
         autocommit: bool = False,
-        parameters: Iterable | Mapping | None = None,
-        handler: Callable | None = None,
+        parameters: Iterable | Mapping[str, Any] | None = None,
+        handler: Callable[[Any], T] | None = None,
         split_statements: bool = True,
         return_last: bool = True,
         return_dictionaries: bool = False,
-    ) -> Any | list[Any] | None:
+    ) -> tuple | list[tuple] | list[list[tuple] | tuple] | None:
         """Runs a command or a list of commands.
 
         Pass a list of SQL statements to the SQL parameter to get them to
@@ -375,10 +385,10 @@ class SnowflakeHook(DbApiHook):
             with self._get_cursor(conn, return_dictionaries) as cur:
                 results = []
                 for sql_statement in sql_list:
-                    self._run_command(cur, sql_statement, parameters)
+                    self._run_command(cur, sql_statement, parameters)  # type: ignore[attr-defined]
 
                     if handler is not None:
-                        result = handler(cur)
+                        result = self._make_common_data_structure(handler(cur))  # type: ignore[attr-defined]
                         if return_single_query_results(sql, return_last, split_statements):
                             _last_result = result
                             _last_description = cur.description
@@ -415,3 +425,69 @@ class SnowflakeHook(DbApiHook):
         finally:
             if cursor is not None:
                 cursor.close()
+
+    def get_openlineage_database_info(self, connection) -> DatabaseInfo:
+        from airflow.providers.openlineage.sqlparser import DatabaseInfo
+
+        database = self.database or self._get_field(connection.extra_dejson, "database")
+
+        return DatabaseInfo(
+            scheme=self.get_openlineage_database_dialect(connection),
+            authority=self._get_openlineage_authority(connection),
+            information_schema_columns=[
+                "table_schema",
+                "table_name",
+                "column_name",
+                "ordinal_position",
+                "data_type",
+                "table_catalog",
+            ],
+            database=database,
+            is_information_schema_cross_db=True,
+            is_uppercase_names=True,
+        )
+
+    def get_openlineage_database_dialect(self, _) -> str:
+        return "snowflake"
+
+    def get_openlineage_default_schema(self) -> str | None:
+        """
+        Attempts to get current schema.
+
+        Usually ``SELECT CURRENT_SCHEMA();`` should work.
+        However, apparently you may set ``database`` without ``schema``
+        and get results from ``SELECT CURRENT_SCHEMAS();`` but not
+        from ``SELECT CURRENT_SCHEMA();``.
+        It still may return nothing if no database is set in connection.
+        """
+        schema = self._get_conn_params()["schema"]
+        if not schema:
+            current_schemas = self.get_first("SELECT PARSE_JSON(CURRENT_SCHEMAS())[0]::string;")[0]
+            if current_schemas:
+                _, schema = current_schemas.split(".")
+        return schema
+
+    def _get_openlineage_authority(self, _) -> str:
+        from openlineage.common.provider.snowflake import fix_snowflake_sqlalchemy_uri
+
+        uri = fix_snowflake_sqlalchemy_uri(self.get_uri())
+        return urlparse(uri).hostname
+
+    def get_openlineage_database_specific_lineage(self, _) -> OperatorLineage | None:
+        from openlineage.client.facet import ExternalQueryRunFacet
+
+        from airflow.providers.openlineage.extractors import OperatorLineage
+        from airflow.providers.openlineage.sqlparser import SQLParser
+
+        connection = self.get_connection(getattr(self, self.conn_name_attr))
+        namespace = SQLParser.create_namespace(self.get_openlineage_database_info(connection))
+
+        if self.query_ids:
+            return OperatorLineage(
+                run_facets={
+                    "externalQuery": ExternalQueryRunFacet(
+                        externalQueryId=self.query_ids[0], source=namespace
+                    )
+                }
+            )
+        return None

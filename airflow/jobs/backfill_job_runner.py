@@ -17,15 +17,14 @@
 # under the License.
 from __future__ import annotations
 
-import datetime
 import time
 from typing import TYPE_CHECKING, Any, Iterable, Iterator, Mapping, Sequence
 
 import attr
 import pendulum
-from sqlalchemy import select, update
+from sqlalchemy import select, tuple_, update
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm.session import Session, make_transient
+from sqlalchemy.orm.session import make_transient
 from tabulate import tabulate
 
 from airflow import models
@@ -42,7 +41,7 @@ from airflow.jobs.base_job_runner import BaseJobRunner
 from airflow.jobs.job import Job, perform_heartbeat
 from airflow.models import DAG, DagPickle
 from airflow.models.dagrun import DagRun
-from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
+from airflow.models.taskinstance import TaskInstance
 from airflow.ti_deps.dep_context import DepContext
 from airflow.ti_deps.dependencies_deps import BACKFILL_QUEUED_DEPS
 from airflow.timetables.base import DagRunInfo
@@ -54,11 +53,16 @@ from airflow.utils.state import DagRunState, State, TaskInstanceState
 from airflow.utils.types import DagRunType
 
 if TYPE_CHECKING:
+    import datetime
+
+    from sqlalchemy.orm.session import Session
+
     from airflow.executors.base_executor import BaseExecutor
     from airflow.models.abstractoperator import AbstractOperator
+    from airflow.models.taskinstance import TaskInstanceKey
 
 
-class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
+class BackfillJobRunner(BaseJobRunner, LoggingMixin):
     """
     A backfill job runner consists of a dag or subdag for a specific time range.
 
@@ -68,7 +72,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
 
     job_type = "BackfillJob"
 
-    STATES_COUNT_AS_RUNNING = (State.RUNNING, State.QUEUED)
+    STATES_COUNT_AS_RUNNING = (TaskInstanceState.RUNNING, TaskInstanceState.QUEUED)
 
     @attr.define
     class _DagRunTaskStatus:
@@ -170,7 +174,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
 
     def _update_counters(self, ti_status: _DagRunTaskStatus, session: Session) -> None:
         """
-        Updates the counters per state of the tasks that were running.
+        Update the counters per state of the tasks that were running.
 
         Can re-add to tasks to run when required.
 
@@ -219,7 +223,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
             # is changed externally, e.g. by clearing tasks from the ui. We need to cover
             # for that as otherwise those tasks would fall outside the scope of
             # the backfill suddenly.
-            elif ti.state == State.NONE:
+            elif ti.state is None:
                 self.log.warning(
                     "FIXME: task instance %s state was set to none externally or "
                     "reaching concurrency limits. Re-adding task to queue.",
@@ -260,16 +264,38 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
         :return: An iterable of expanded TaskInstance per MappedTask
         """
         executor = self.job.executor
+        # list of tuples (dag_id, task_id, execution_date, map_index) of running tasks in executor
+        buffered_events = list(executor.get_event_buffer().items())
+        running_tis_ids = [
+            (key.dag_id, key.task_id, key.run_id, key.map_index)
+            for key, _ in buffered_events
+            if key in running
+        ]
+        # list of TaskInstance of running tasks in executor (refreshed from db in batch)
+        refreshed_running_tis = session.scalars(
+            select(TaskInstance).where(
+                tuple_(
+                    TaskInstance.dag_id,
+                    TaskInstance.task_id,
+                    TaskInstance.run_id,
+                    TaskInstance.map_index,
+                ).in_(running_tis_ids)
+            )
+        ).all()
+        # dict of refreshed TaskInstance by key to easily find them
+        running_dict = {(ti.dag_id, ti.task_id, ti.run_id, ti.map_index): ti for ti in refreshed_running_tis}
+        need_refresh = False
 
-        # TODO: query all instead of refresh from db
-        for key, value in list(executor.get_event_buffer().items()):
+        for key, value in buffered_events:
             state, info = value
-            if key not in running:
+            ti_key = (key.dag_id, key.task_id, key.run_id, key.map_index)
+            if ti_key not in running_dict:
                 self.log.warning("%s state %s not in running=%s", key, state, running.values())
                 continue
 
-            ti = running[key]
-            ti.refresh_from_db()
+            ti = running_dict[ti_key]
+            if need_refresh:
+                ti.refresh_from_db(session=session)
 
             self.log.debug("Executor state: %s task %s", state, ti)
 
@@ -451,7 +477,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
 
         is_unit_test = airflow_conf.getboolean("core", "unit_test_mode")
 
-        while (len(ti_status.to_run) > 0 or len(ti_status.running) > 0) and len(ti_status.deadlocked) == 0:
+        while (ti_status.to_run or ti_status.running) and not ti_status.deadlocked:
             self.log.debug("*** Clearing out not_ready list ***")
             ti_status.not_ready.clear()
 
@@ -540,10 +566,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
 
                         cfg_path = None
 
-                        executor_class, _ = ExecutorLoader.import_executor_cls(
-                            self.job.executor_class,
-                        )
-                        if executor_class.is_local:
+                        if executor.is_local:
                             cfg_path = tmp_configuration_copy()
 
                         executor.queue_task_instance(
@@ -591,61 +614,84 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
             try:
                 for task in self.dag.topological_sort(include_subdag_tasks=True):
                     for key, ti in list(ti_status.to_run.items()):
-                        if task.task_id != ti.task_id:
-                            continue
+                        # Attempt to workaround deadlock on backfill by attempting to commit the transaction
+                        # state update few times before giving up
+                        max_attempts = 5
+                        for i in range(max_attempts):
+                            if task.task_id != ti.task_id:
+                                continue
 
-                        pool = session.scalar(
-                            select(models.Pool).where(models.Pool.pool == task.pool).limit(1)
-                        )
-                        if not pool:
-                            raise PoolNotFound(f"Unknown pool: {task.pool}")
-
-                        open_slots = pool.open_slots(session=session)
-                        if open_slots <= 0:
-                            raise NoAvailablePoolSlot(
-                                f"Not scheduling since there are {open_slots} open slots in pool {task.pool}"
+                            pool = session.scalar(
+                                select(models.Pool).where(models.Pool.pool == task.pool).limit(1)
                             )
+                            if not pool:
+                                raise PoolNotFound(f"Unknown pool: {task.pool}")
 
-                        num_running_task_instances_in_dag = DAG.get_num_task_instances(
-                            self.dag_id,
-                            states=self.STATES_COUNT_AS_RUNNING,
-                            session=session,
-                        )
+                            open_slots = pool.open_slots(session=session)
+                            if open_slots <= 0:
+                                raise NoAvailablePoolSlot(
+                                    f"Not scheduling since there are {open_slots} "
+                                    f"open slots in pool {task.pool}"
+                                )
 
-                        if num_running_task_instances_in_dag >= self.dag.max_active_tasks:
-                            raise DagConcurrencyLimitReached(
-                                "Not scheduling since DAG max_active_tasks limit is reached."
-                            )
-
-                        if task.max_active_tis_per_dag is not None:
-                            num_running_task_instances_in_task = DAG.get_num_task_instances(
-                                dag_id=self.dag_id,
-                                task_ids=[task.task_id],
+                            num_running_task_instances_in_dag = DAG.get_num_task_instances(
+                                self.dag_id,
                                 states=self.STATES_COUNT_AS_RUNNING,
                                 session=session,
                             )
 
-                            if num_running_task_instances_in_task >= task.max_active_tis_per_dag:
-                                raise TaskConcurrencyLimitReached(
-                                    "Not scheduling since Task concurrency limit is reached."
+                            if num_running_task_instances_in_dag >= self.dag.max_active_tasks:
+                                raise DagConcurrencyLimitReached(
+                                    "Not scheduling since DAG max_active_tasks limit is reached."
                                 )
 
-                        if task.max_active_tis_per_dagrun is not None:
-                            num_running_task_instances_in_task_dagrun = DAG.get_num_task_instances(
-                                dag_id=self.dag_id,
-                                run_id=ti.run_id,
-                                task_ids=[task.task_id],
-                                states=self.STATES_COUNT_AS_RUNNING,
-                                session=session,
-                            )
-
-                            if num_running_task_instances_in_task_dagrun >= task.max_active_tis_per_dagrun:
-                                raise TaskConcurrencyLimitReached(
-                                    "Not scheduling since Task concurrency per DAG run limit is reached."
+                            if task.max_active_tis_per_dag is not None:
+                                num_running_task_instances_in_task = DAG.get_num_task_instances(
+                                    dag_id=self.dag_id,
+                                    task_ids=[task.task_id],
+                                    states=self.STATES_COUNT_AS_RUNNING,
+                                    session=session,
                                 )
 
-                        _per_task_process(key, ti, session)
-                        session.commit()
+                                if num_running_task_instances_in_task >= task.max_active_tis_per_dag:
+                                    raise TaskConcurrencyLimitReached(
+                                        "Not scheduling since Task concurrency limit is reached."
+                                    )
+
+                            if task.max_active_tis_per_dagrun is not None:
+                                num_running_task_instances_in_task_dagrun = DAG.get_num_task_instances(
+                                    dag_id=self.dag_id,
+                                    run_id=ti.run_id,
+                                    task_ids=[task.task_id],
+                                    states=self.STATES_COUNT_AS_RUNNING,
+                                    session=session,
+                                )
+
+                                if (
+                                    num_running_task_instances_in_task_dagrun
+                                    >= task.max_active_tis_per_dagrun
+                                ):
+                                    raise TaskConcurrencyLimitReached(
+                                        "Not scheduling since Task concurrency per DAG run limit is reached."
+                                    )
+
+                            _per_task_process(key, ti, session)
+                            try:
+                                session.commit()
+                            except OperationalError:
+                                self.log.error(
+                                    "Failed to commit task state due to operational error. "
+                                    "The job will retry this operation so if your backfill succeeds, "
+                                    "you can safely ignore this message.",
+                                    exc_info=True,
+                                )
+                                session.rollback()
+                                if i == max_attempts - 1:
+                                    raise
+                                # retry the loop
+                            else:
+                                # break the retry loop
+                                break
             except (NoAvailablePoolSlot, DagConcurrencyLimitReached, TaskConcurrencyLimitReached) as e:
                 self.log.debug(e)
 
@@ -658,11 +704,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
             # If the set of tasks that aren't ready ever equals the set of
             # tasks to run and there are no running tasks then the backfill
             # is deadlocked
-            if (
-                ti_status.not_ready
-                and ti_status.not_ready == set(ti_status.to_run)
-                and len(ti_status.running) == 0
-            ):
+            if ti_status.not_ready and ti_status.not_ready == set(ti_status.to_run) and not ti_status.running:
                 self.log.warning("Deadlock discovered for ti_status.to_run=%s", ti_status.to_run.values())
                 ti_status.deadlocked.update(ti_status.to_run.values())
                 ti_status.to_run.clear()
@@ -699,7 +741,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
             _dag_runs = ti_status.active_runs[:]
             for run in _dag_runs:
                 run.update_state(session=session)
-                if run.state in State.finished:
+                if run.state in State.finished_dr_states:
                     ti_status.finished_runs += 1
                     ti_status.active_runs.remove(run)
                     executed_run_dates.append(run.execution_date)
@@ -727,7 +769,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
 
             if all(key.map_index == -1 for key in ti_keys):
                 headers = ["DAG ID", "Task ID", "Run ID", "Try number"]
-                sorted_ti_keys = map(lambda k: k[0:4], sorted_ti_keys)
+                sorted_ti_keys = (k[0:4] for k in sorted_ti_keys)
             else:
                 headers = ["DAG ID", "Task ID", "Run ID", "Map Index", "Try number"]
 
@@ -769,7 +811,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
             yield tabulate_ti_keys_set([ti.key for ti in ti_status.deadlocked])
 
     def _get_dag_with_subdags(self) -> list[DAG]:
-        return [self.dag] + self.dag.subdags
+        return [self.dag, *self.dag.subdags]
 
     @provide_session
     def _execute_dagruns(
@@ -796,11 +838,10 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
         for dagrun_info in dagrun_infos:
             for dag in self._get_dag_with_subdags():
                 dag_run = self._get_dag_run(dagrun_info, dag, session=session)
-                if dag_run is None:
-                    continue
-                tis_map = self._task_instances_for_dag_run(dag, dag_run, session=session)
-                ti_status.active_runs.append(dag_run)
-                ti_status.to_run.update(tis_map or {})
+                if dag_run is not None:
+                    tis_map = self._task_instances_for_dag_run(dag, dag_run, session=session)
+                    ti_status.active_runs.append(dag_run)
+                    ti_status.to_run.update(tis_map or {})
 
         processed_dag_run_dates = self._process_backfill_task_instances(
             ti_status=ti_status,
@@ -819,8 +860,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
         session: Session = NEW_SESSION,
     ) -> None:
         """
-        Go through the dag_runs and update the state based on the task_instance state.
-        Then set DAG runs that are not finished to failed.
+        Update the state of each dagrun based on the task_instance state and set unfinished runs to failed.
 
         :param dag_runs: DAG runs
         :param session: session
@@ -828,7 +868,7 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
         """
         for dag_run in dag_runs:
             dag_run.update_state()
-            if dag_run.state not in State.finished:
+            if dag_run.state not in State.finished_dr_states:
                 dag_run.set_state(DagRunState.FAILED)
             session.merge(dag_run)
 
@@ -943,6 +983,13 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
             # TODO: we will need to terminate running task instances and set the
             # state to failed.
             self._set_unfinished_dag_runs_to_failed(ti_status.active_runs)
+        except OperationalError:
+            self.log.error(
+                "Backfill job dead-locked. The job will retry the job so it is likely "
+                "to heal itself. If your backfill succeeds you can ignore this exception.",
+                exc_info=True,
+            )
+            raise
         finally:
             session.commit()
             executor.end()
@@ -1004,15 +1051,15 @@ class BackfillJobRunner(BaseJobRunner[Job], LoggingMixin):
             ).all()
 
             for ti in reset_tis:
-                ti.state = State.NONE
+                ti.state = None
                 session.merge(ti)
 
             return result + reset_tis
 
         reset_tis = helpers.reduce_in_chunks(query, tis_to_reset, [], self.job.max_tis_per_query)
 
-        task_instance_str = "\n\t".join(repr(x) for x in reset_tis)
+        task_instance_str = "\n".join(f"\t{x!r}" for x in reset_tis)
         session.flush()
 
-        self.log.info("Reset the following %s TaskInstances:\n\t%s", len(reset_tis), task_instance_str)
+        self.log.info("Reset the following %s TaskInstances:\n%s", len(reset_tis), task_instance_str)
         return len(reset_tis)

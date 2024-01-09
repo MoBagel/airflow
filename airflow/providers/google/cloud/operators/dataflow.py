@@ -27,8 +27,8 @@ from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Sequence
 
-from airflow import AirflowException
-from airflow.exceptions import AirflowProviderDeprecationWarning
+from airflow.configuration import conf
+from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning
 from airflow.providers.apache.beam.hooks.beam import BeamHook, BeamRunnerType
 from airflow.providers.google.cloud.hooks.dataflow import (
     DEFAULT_DATAFLOW_LOCATION,
@@ -60,9 +60,12 @@ class CheckJobRunning(Enum):
 
 
 class DataflowConfiguration:
-    """Dataflow configuration that can be passed to
-    :class:`~airflow.providers.apache.beam.operators.beam.BeamRunJavaPipelineOperator` and
-    :class:`~airflow.providers.apache.beam.operators.beam.BeamRunPythonPipelineOperator`.
+    """
+    Dataflow configuration for BeamRunJavaPipelineOperator and BeamRunPythonPipelineOperator.
+
+    .. seealso::
+        :class:`~airflow.providers.apache.beam.operators.beam.BeamRunJavaPipelineOperator`
+        and :class:`~airflow.providers.apache.beam.operators.beam.BeamRunPythonPipelineOperator`.
 
     :param job_name: The 'jobName' to use when executing the Dataflow job
         (templated). This ends up being set in the pipeline options, so any entry
@@ -166,13 +169,15 @@ class DataflowConfiguration:
 
 class DataflowCreateJavaJobOperator(GoogleCloudBaseOperator):
     """
-    Start a Java Cloud Dataflow batch job. The parameters of the operation
-    will be passed to the job.
+    Start a Java Cloud Dataflow batch job; the parameters of the operation will be passed to the job.
 
     This class is deprecated.
-    Please use `providers.apache.beam.operators.beam.BeamRunJavaPipelineOperator`.
 
-    **Example**: ::
+    Please use :class:`providers.apache.beam.operators.beam.BeamRunJavaPipelineOperator`.
+
+    Example usage:
+
+    .. code-block:: python
 
         default_args = {
             "owner": "airflow",
@@ -282,6 +287,8 @@ class DataflowCreateJavaJobOperator(GoogleCloudBaseOperator):
 
         If you in your pipeline do not call the wait_for_pipeline method, and pass wait_until_finish=False
         to the operator, the second loop will check once is job not in terminal state and exit the loop.
+    :param expected_terminal_state: The expected terminal state of the operator on which the corresponding
+        Airflow task succeeds. When not specified, it will be determined by the hook.
 
     Note that both
     ``dataflow_default_options`` and ``options`` will be merged to specify pipeline
@@ -343,6 +350,7 @@ class DataflowCreateJavaJobOperator(GoogleCloudBaseOperator):
         multiple_jobs: bool = False,
         cancel_timeout: int | None = 10 * 60,
         wait_until_finished: bool | None = None,
+        expected_terminal_state: str | None = None,
         **kwargs,
     ) -> None:
         # TODO: Remove one day
@@ -372,6 +380,7 @@ class DataflowCreateJavaJobOperator(GoogleCloudBaseOperator):
         self.check_if_running = check_if_running
         self.cancel_timeout = cancel_timeout
         self.wait_until_finished = wait_until_finished
+        self.expected_terminal_state = expected_terminal_state
         self.job_id = None
         self.beam_hook: BeamHook | None = None
         self.dataflow_hook: DataflowHook | None = None
@@ -384,6 +393,7 @@ class DataflowCreateJavaJobOperator(GoogleCloudBaseOperator):
             poll_sleep=self.poll_sleep,
             cancel_timeout=self.cancel_timeout,
             wait_until_finished=self.wait_until_finished,
+            expected_terminal_state=self.expected_terminal_state,
         )
         job_name = self.dataflow_hook.build_dataflow_job_name(job_name=self.job_name)
         pipeline_options = copy.deepcopy(self.dataflow_default_options)
@@ -417,7 +427,6 @@ class DataflowCreateJavaJobOperator(GoogleCloudBaseOperator):
                     variables=pipeline_options,
                 )
                 while is_running and self.check_if_running == CheckJobRunning.WaitForRun:
-
                     is_running = self.dataflow_hook.is_job_dataflow_running(
                         name=self.job_name,
                         variables=pipeline_options,
@@ -450,8 +459,7 @@ class DataflowCreateJavaJobOperator(GoogleCloudBaseOperator):
 
 class DataflowTemplatedJobStartOperator(GoogleCloudBaseOperator):
     """
-    Start a Templated Cloud Dataflow job. The parameters of the operation
-    will be passed to the job.
+    Start a Templated Cloud Dataflow job; the parameters of the operation will be passed to the job.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -527,6 +535,8 @@ class DataflowTemplatedJobStartOperator(GoogleCloudBaseOperator):
 
         If you in your pipeline do not call the wait_for_pipeline method, and pass wait_until_finish=False
         to the operator, the second loop will check once is job not in terminal state and exit the loop.
+    :param expected_terminal_state: The expected terminal state of the operator on which the corresponding
+        Airflow task succeeds. When not specified, it will be determined by the hook.
 
     It's a good practice to define dataflow_* parameters in the default_args of the dag
     like the project, zone and staging location.
@@ -609,7 +619,8 @@ class DataflowTemplatedJobStartOperator(GoogleCloudBaseOperator):
         cancel_timeout: int | None = 10 * 60,
         wait_until_finished: bool | None = None,
         append_job_name: bool = True,
-        deferrable: bool = False,
+        deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
+        expected_terminal_state: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -629,6 +640,7 @@ class DataflowTemplatedJobStartOperator(GoogleCloudBaseOperator):
         self.wait_until_finished = wait_until_finished
         self.append_job_name = append_job_name
         self.deferrable = deferrable
+        self.expected_terminal_state = expected_terminal_state
 
         self.job: dict | None = None
 
@@ -653,6 +665,7 @@ class DataflowTemplatedJobStartOperator(GoogleCloudBaseOperator):
             impersonation_chain=self.impersonation_chain,
             cancel_timeout=self.cancel_timeout,
             wait_until_finished=self.wait_until_finished,
+            expected_terminal_state=self.expected_terminal_state,
         )
         return hook
 
@@ -702,7 +715,7 @@ class DataflowTemplatedJobStartOperator(GoogleCloudBaseOperator):
 
     def execute_complete(self, context: Context, event: dict[str, Any]):
         """Method which executes after trigger finishes its work."""
-        if event["status"] == "error" or event["status"] == "stopped":
+        if event["status"] in ("error", "stopped"):
             self.log.info("status: %s, msg: %s", event["status"], event["message"])
             raise AirflowException(event["message"])
 
@@ -783,6 +796,8 @@ class DataflowStartFlexTemplateOperator(GoogleCloudBaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
     :param deferrable: Run operator in the deferrable mode.
+    :param expected_terminal_state: The expected final status of the operator on which the corresponding
+        Airflow task succeeds. When not specified, it will be determined by the hook.
     :param append_job_name: True if unique suffix has to be appended to job name.
     """
 
@@ -799,8 +814,9 @@ class DataflowStartFlexTemplateOperator(GoogleCloudBaseOperator):
         cancel_timeout: int | None = 10 * 60,
         wait_until_finished: bool | None = None,
         impersonation_chain: str | Sequence[str] | None = None,
-        deferrable: bool = False,
+        deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         append_job_name: bool = True,
+        expected_terminal_state: str | None = None,
         *args,
         **kwargs,
     ) -> None:
@@ -815,6 +831,7 @@ class DataflowStartFlexTemplateOperator(GoogleCloudBaseOperator):
         self.job: dict | None = None
         self.impersonation_chain = impersonation_chain
         self.deferrable = deferrable
+        self.expected_terminal_state = expected_terminal_state
         self.append_job_name = append_job_name
 
         self._validate_deferrable_params()
@@ -838,6 +855,7 @@ class DataflowStartFlexTemplateOperator(GoogleCloudBaseOperator):
             cancel_timeout=self.cancel_timeout,
             wait_until_finished=self.wait_until_finished,
             impersonation_chain=self.impersonation_chain,
+            expected_terminal_state=self.expected_terminal_state,
         )
         return hook
 
@@ -881,13 +899,13 @@ class DataflowStartFlexTemplateOperator(GoogleCloudBaseOperator):
         job_body = self.body.get("launch_parameter") or self.body.get("launchParameter")
         job_name = job_body.get("jobName")
         if job_name:
-            job_name += f"-{str(uuid.uuid4())[:8]}"
+            job_name += f"-{uuid.uuid4()!s:.8}"
             job_body["jobName"] = job_name
             self.log.info("Job name was changed to %s", job_name)
 
     def execute_complete(self, context: Context, event: dict):
         """Method which executes after trigger finishes its work."""
-        if event["status"] == "error" or event["status"] == "stopped":
+        if event["status"] in ("error", "stopped"):
             self.log.info("status: %s, msg: %s", event["status"], event["message"])
             raise AirflowException(event["message"])
 
@@ -1013,14 +1031,15 @@ class DataflowStartSqlJobOperator(GoogleCloudBaseOperator):
 
 class DataflowCreatePythonJobOperator(GoogleCloudBaseOperator):
     """
-    Launching Cloud Dataflow jobs written in python. Note that both
-    dataflow_default_options and options will be merged to specify pipeline
-    execution parameter, and dataflow_default_options is expected to save
-    high-level options, for instances, project and zone information, which
-    apply to all dataflow operators in the DAG.
+    Launching Cloud Dataflow jobs written in python.
+
+    Note that both dataflow_default_options and options will be merged to specify pipeline
+    execution parameter, and dataflow_default_options is expected to save high-level options,
+    for instances, project and zone information, which apply to all dataflow operators in the DAG.
 
     This class is deprecated.
-    Please use `providers.apache.beam.operators.beam.BeamRunPythonPipelineOperator`.
+
+    Please use :class:`providers.apache.beam.operators.beam.BeamRunPythonPipelineOperator`.
 
     .. seealso::
         For more detail on job submission have a look at the reference:
@@ -1183,7 +1202,9 @@ class DataflowCreatePythonJobOperator(GoogleCloudBaseOperator):
         pipeline_options.update(self.options)
 
         # Convert argument names from lowerCamelCase to snake case.
-        camel_to_snake = lambda name: re.sub(r"[A-Z]", lambda x: "_" + x.group(0).lower(), name)
+        def camel_to_snake(name):
+            return re.sub("[A-Z]", lambda x: "_" + x.group(0).lower(), name)
+
         formatted_pipeline_options = {camel_to_snake(key): pipeline_options[key] for key in pipeline_options}
 
         def set_current_job_id(job_id):
@@ -1230,6 +1251,7 @@ class DataflowCreatePythonJobOperator(GoogleCloudBaseOperator):
 class DataflowStopJobOperator(GoogleCloudBaseOperator):
     """
     Stops the job with the specified name prefix or Job ID.
+
     All jobs with provided name prefix will be stopped.
     Streaming jobs are drained by default.
 
@@ -1263,6 +1285,12 @@ class DataflowStopJobOperator(GoogleCloudBaseOperator):
         instead of draining. See: https://cloud.google.com/dataflow/docs/guides/stopping-a-pipeline
     :param stop_timeout: wait time in seconds for successful job canceling/draining
     """
+
+    template_fields = [
+        "job_id",
+        "project_id",
+        "impersonation_chain",
+    ]
 
     def __init__(
         self,

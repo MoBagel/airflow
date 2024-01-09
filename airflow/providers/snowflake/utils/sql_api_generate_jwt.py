@@ -42,6 +42,7 @@ SUBJECT = "sub"
 class JWTGenerator:
     """
     Creates and signs a JWT with the specified private key file, username, and account identifier.
+
     The JWTGenerator keeps the generated token and only regenerates the token if a specified period
     of time has passed.
 
@@ -92,6 +93,7 @@ class JWTGenerator:
     def prepare_account_name_for_jwt(self, raw_account: str) -> str:
         """
         Prepare the account identifier for use in the JWT.
+
         For the JWT, the account identifier must not include the subdomain or any region or cloud provider
         information.
 
@@ -100,20 +102,18 @@ class JWTGenerator:
         account = raw_account
         if ".global" not in account:
             # Handle the general case.
-            idx = account.find(".")
-            if idx > 0:
-                account = account[0:idx]
+            account = account.partition(".")[0]
         else:
             # Handle the replication case.
-            idx = account.find("-")
-            if idx > 0:
-                account = account[0:idx]  # pragma: no cover
+            account = account.partition("-")[0]
         # Use uppercase for the account identifier.
         return account.upper()
 
     def get_token(self) -> str | None:
         """
-        Generates a new JWT. If a JWT has been already been generated earlier, return the previously
+        Generates a new JWT.
+
+        If a JWT has been already been generated earlier, return the previously
         generated token unless the specified renewal time has passed.
         """
         now = datetime.now(timezone.utc)  # Fetch the current time

@@ -52,7 +52,7 @@ class AirbyteHook(HttpHook):
 
     def wait_for_job(self, job_id: str | int, wait_seconds: float = 3, timeout: float | None = 3600) -> None:
         """
-        Helper method which polls a job to check if it finishes.
+        Poll a job to check if it finishes.
 
         :param job_id: Required. Id of the Airbyte job
         :param wait_seconds: Optional. Number of seconds between checks.
@@ -63,6 +63,7 @@ class AirbyteHook(HttpHook):
         start = time.monotonic()
         while True:
             if timeout and start + timeout < time.monotonic():
+                self.cancel_job(job_id=(int(job_id)))
                 raise AirflowException(f"Timeout: Airbyte job {job_id} is not ready after {timeout}s")
             time.sleep(wait_seconds)
             try:
@@ -85,7 +86,7 @@ class AirbyteHook(HttpHook):
 
     def submit_sync_connection(self, connection_id: str) -> Any:
         """
-        Submits a job to a Airbyte server.
+        Submit a job to a Airbyte server.
 
         :param connection_id: Required. The ConnectionId of the Airbyte Connection.
         """
@@ -97,7 +98,7 @@ class AirbyteHook(HttpHook):
 
     def get_job(self, job_id: int) -> Any:
         """
-        Gets the resource representation for a job in Airbyte.
+        Get the resource representation for a job in Airbyte.
 
         :param job_id: Required. Id of the Airbyte job
         """

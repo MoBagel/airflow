@@ -19,21 +19,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
 
-from google.api_core.operation import Operation
-
-from airflow import AirflowException
+from airflow.exceptions import AirflowException, AirflowSkipException
 from airflow.providers.google.cloud.hooks.dataproc_metastore import DataprocMetastoreHook
 from airflow.providers.google.cloud.hooks.gcs import parse_json_from_gcs
 from airflow.sensors.base import BaseSensorOperator
 
 if TYPE_CHECKING:
+    from google.api_core.operation import Operation
+
     from airflow.utils.context import Context
 
 
 class MetastoreHivePartitionSensor(BaseSensorOperator):
     """
     Waits for partitions to show up in Hive.
-        This sensor uses Google Cloud SDK and passes requests via gRPC.
+
+    This sensor uses Google Cloud SDK and passes requests via gRPC.
 
     :param service_id: Required. Dataproc Metastore service id.
     :param region: Required. The ID of the Google Cloud region that the service belongs to.
@@ -94,13 +95,21 @@ class MetastoreHivePartitionSensor(BaseSensorOperator):
         self.log.info("Extracting result manifest")
         manifest: dict = parse_json_from_gcs(gcp_conn_id=self.gcp_conn_id, file_uri=result_manifest_uri)
         if not (manifest and isinstance(manifest, dict)):
-            raise AirflowException(
+            # TODO: remove this if check when min_airflow_version is set to higher than 2.7.1
+            message = (
                 f"Failed to extract result manifest. "
                 f"Expected not empty dict, but this was received: {manifest}"
             )
+            if self.soft_fail:
+                raise AirflowSkipException(message)
+            raise AirflowException(message)
 
         if manifest.get("status", {}).get("code") != 0:
-            raise AirflowException(f"Request failed: {manifest.get('message')}")
+            # TODO: remove this if check when min_airflow_version is set to higher than 2.7.1
+            message = f"Request failed: {manifest.get('message')}"
+            if self.soft_fail:
+                raise AirflowSkipException(message)
+            raise AirflowException(message)
 
         # Extract actual query results
         result_base_uri = result_manifest_uri.rsplit("/", 1)[0]
@@ -112,4 +121,4 @@ class MetastoreHivePartitionSensor(BaseSensorOperator):
 
         # Return True if we got all requested partitions.
         # If no partitions were given in the request, then we expect to find at least one.
-        return found_partitions > 0 and found_partitions >= len(set(self.partitions))
+        return found_partitions >= max(1, len(set(self.partitions)))

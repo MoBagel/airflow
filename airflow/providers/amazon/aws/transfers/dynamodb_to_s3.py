@@ -15,18 +15,15 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-This module contains operators to replicate records from
-DynamoDB table to S3.
-"""
+
 from __future__ import annotations
 
 import json
+import os
 from copy import copy
 from datetime import datetime
 from decimal import Decimal
 from functools import cached_property
-from os.path import getsize
 from tempfile import NamedTemporaryFile
 from typing import IO, TYPE_CHECKING, Any, Callable, Sequence
 from uuid import uuid4
@@ -38,6 +35,7 @@ from airflow.providers.amazon.aws.transfers.base import AwsToAwsBaseOperator
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
+    from airflow.utils.types import ArgNotSet
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -58,7 +56,7 @@ def _upload_file_to_s3(
     file_obj: IO,
     bucket_name: str,
     s3_key_prefix: str,
-    aws_conn_id: str | None = AwsBaseHook.default_conn_name,
+    aws_conn_id: str | None | ArgNotSet = AwsBaseHook.default_conn_name,
 ) -> None:
     s3_client = S3Hook(aws_conn_id=aws_conn_id).get_conn()
     file_obj.seek(0)
@@ -72,6 +70,7 @@ def _upload_file_to_s3(
 class DynamoDBToS3Operator(AwsToAwsBaseOperator):
     """
     Replicates records from a DynamoDB table to S3.
+
     It scans a DynamoDB table and writes the received records to a file
     on the local filesystem. It flushes the file to S3 once the file size
     exceeds the file size limit specified by the user.
@@ -86,13 +85,17 @@ class DynamoDBToS3Operator(AwsToAwsBaseOperator):
     :param dynamodb_table_name: Dynamodb table to replicate data from
     :param s3_bucket_name: S3 bucket to replicate data to
     :param file_size: Flush file to s3 if file size >= file_size
-    :param dynamodb_scan_kwargs: kwargs pass to <https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/dynamodb.html#DynamoDB.Table.scan>
+    :param dynamodb_scan_kwargs: kwargs pass to
+        <https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/dynamodb.html#DynamoDB.Table.scan>
     :param s3_key_prefix: Prefix of s3 object key
-    :param process_func: How we transforms a dynamodb item to bytes. By default we dump the json
+    :param process_func: How we transform a dynamodb item to bytes. By default, we dump the json
     :param export_time: Time in the past from which to export table data, counted in seconds from the start of
      the Unix epoch. The table export will be a snapshot of the table's state at this point in time.
     :param export_format: The format for the exported data. Valid values for ExportFormat are DYNAMODB_JSON
      or ION.
+    :param check_interval: The amount of time in seconds to wait between attempts. Only if ``export_time`` is
+        provided.
+    :param max_attempts: The maximum number of attempts to be made. Only if ``export_time`` is provided.
     """
 
     template_fields: Sequence[str] = (
@@ -105,6 +108,8 @@ class DynamoDBToS3Operator(AwsToAwsBaseOperator):
         "process_func",
         "export_time",
         "export_format",
+        "check_interval",
+        "max_attempts",
     )
 
     template_fields_renderers = {
@@ -122,6 +127,8 @@ class DynamoDBToS3Operator(AwsToAwsBaseOperator):
         process_func: Callable[[dict[str, Any]], bytes] = _convert_item_to_json_bytes,
         export_time: datetime | None = None,
         export_format: str = "DYNAMODB_JSON",
+        check_interval: int = 30,
+        max_attempts: int = 60,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -133,6 +140,8 @@ class DynamoDBToS3Operator(AwsToAwsBaseOperator):
         self.s3_key_prefix = s3_key_prefix
         self.export_time = export_time
         self.export_format = export_format
+        self.check_interval = check_interval
+        self.max_attempts = max_attempts
 
     @cached_property
     def hook(self):
@@ -147,8 +156,9 @@ class DynamoDBToS3Operator(AwsToAwsBaseOperator):
 
     def _export_table_to_point_in_time(self):
         """
-        Export data from start of epoc till `export_time`. Table export will be a snapshot of the table's
-         state at this point in time.
+        Export data from start of epoc till `export_time`.
+
+        Table export will be a snapshot of the table's state at this point in time.
         """
         if self.export_time and self.export_time > datetime.now(self.export_time.tzinfo):
             raise ValueError("The export_time parameter cannot be a future time.")
@@ -164,7 +174,10 @@ class DynamoDBToS3Operator(AwsToAwsBaseOperator):
         )
         waiter = self.hook.get_waiter("export_table")
         export_arn = response.get("ExportDescription", {}).get("ExportArn")
-        waiter.wait(ExportArn=export_arn)
+        waiter.wait(
+            ExportArn=export_arn,
+            WaiterConfig={"Delay": self.check_interval, "MaxAttempts": self.max_attempts},
+        )
 
     def _export_entire_data(self):
         """Export all data from the table."""
@@ -197,7 +210,7 @@ class DynamoDBToS3Operator(AwsToAwsBaseOperator):
             scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
 
             # Upload the file to S3 if reach file size limit
-            if getsize(temp_file.name) >= self.file_size:
+            if os.path.getsize(temp_file.name) >= self.file_size:
                 _upload_file_to_s3(temp_file, self.s3_bucket_name, self.s3_key_prefix, self.dest_aws_conn_id)
                 temp_file.close()
 

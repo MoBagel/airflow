@@ -19,12 +19,17 @@ from __future__ import annotations
 
 from unittest import mock
 
+import pytest
+
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.pagerduty.hooks.pagerduty_events import PagerdutyEventsHook
 from airflow.providers.pagerduty.notifications.pagerduty import (
     PagerdutyNotifier,
     send_pagerduty_notification,
 )
+
+pytestmark = pytest.mark.db_test
+
 
 PAGERDUTY_API_DEFAULT_CONN_ID = PagerdutyEventsHook.default_conn_name
 
@@ -35,7 +40,7 @@ class TestPagerdutyNotifier:
         with dag_maker("test_notifier") as dag:
             EmptyOperator(task_id="task1")
         notifier = send_pagerduty_notification(summary="DISK at 99%", severity="critical", action="trigger")
-        notifier(context={"dag": dag})
+        notifier({"dag": dag})
         mock_pagerduty_event_hook.return_value.create_event.assert_called_once_with(
             summary="DISK at 99%",
             severity="critical",
@@ -55,7 +60,7 @@ class TestPagerdutyNotifier:
         with dag_maker("test_notifier") as dag:
             EmptyOperator(task_id="task1")
         notifier = PagerdutyNotifier(summary="DISK at 99%", severity="critical", action="trigger")
-        notifier(context={"dag": dag})
+        notifier({"dag": dag})
         mock_pagerduty_event_hook.return_value.create_event.assert_called_once_with(
             summary="DISK at 99%",
             severity="critical",

@@ -23,6 +23,11 @@ Introduction
 The Pagerduty notifier (:class:`airflow.providers.pagerduty.notifications.pagerduty.PagerdutyNotifier`) allows users to send
 messages to Pagerduty using the various ``on_*_callbacks`` at both the DAG level and Task level.
 
+You can also use a notifier with ``sla_miss_callback``.
+
+.. note::
+    When notifiers are used with `sla_miss_callback` the context will contain only values passed to the callback, refer :ref:`sla_miss_callback<concepts:sla_miss_callback>`.
+
 Example Code:
 -------------
 
@@ -31,7 +36,7 @@ Example Code:
     from datetime import datetime
     from airflow import DAG
     from airflow.operators.bash import BashOperator
-    from airflow.providers.pagerduty.notifications.notifier import send_pagerduty_notification
+    from airflow.providers.pagerduty.notifications.pagerduty import send_pagerduty_notification
 
     with DAG(
         "pagerduty_notifier",

@@ -19,16 +19,33 @@
 ``apache-airflow-providers-atlassian-jira``
 ===========================================
 
-Content
--------
 
 .. toctree::
+    :hidden:
+    :maxdepth: 1
+    :caption: Basics
+
+    Home <self>
+    Changelog <changelog>
+    Security <security>
+
+.. toctree::
+    :hidden:
+    :maxdepth: 1
+    :caption: Guides
+
+    Connection types <connections>
+    Notifications <notifications/index>
+
+.. toctree::
+    :hidden:
     :maxdepth: 1
     :caption: References
 
     Python API <_api/airflow/providers/atlassian/jira/index>
 
 .. toctree::
+    :hidden:
     :maxdepth: 1
     :caption: Resources
 
@@ -39,6 +56,7 @@ Content
 
 
 .. toctree::
+    :hidden:
     :maxdepth: 1
     :caption: Commits
 
@@ -48,10 +66,10 @@ Content
 Package apache-airflow-providers-atlassian-jira
 ------------------------------------------------------
 
-`Atlassian Jira <https://www.atlassian.com/>`__
+`Atlassian Jira <https://www.atlassian.com/software/jira/>`__
 
 
-Release: 2.1.0
+Release: 2.5.0
 
 Provider package
 ----------------
@@ -69,13 +87,11 @@ for the minimum Airflow version supported) via
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.4.0``.
+The minimum Apache Airflow version supported by this provider package is ``2.6.0``.
 
 ========================  ==================
 PIP package               Version required
 ========================  ==================
-``apache-airflow``        ``>=2.4.0``
+``apache-airflow``        ``>=2.6.0``
 ``atlassian-python-api``  ``>=1.14.2``
 ========================  ==================
-
-.. include:: ../../airflow/providers/atlassian/jira/CHANGELOG.rst

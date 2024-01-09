@@ -35,6 +35,7 @@ class GCSBlobTrigger(BaseTrigger):
 
     :param bucket: the bucket in the google cloud storage where the objects are residing.
     :param object_name: the file or folder present in the bucket
+    :param use_glob: if true object_name is interpreted as glob
     :param google_cloud_conn_id: reference to the Google Connection
     :param poke_interval: polling period in seconds to check for file/folder
     :param hook_params: Extra config params to be passed to the underlying hook.
@@ -45,6 +46,7 @@ class GCSBlobTrigger(BaseTrigger):
         self,
         bucket: str,
         object_name: str,
+        use_glob: bool,
         poke_interval: float,
         google_cloud_conn_id: str,
         hook_params: dict[str, Any],
@@ -52,6 +54,7 @@ class GCSBlobTrigger(BaseTrigger):
         super().__init__()
         self.bucket = bucket
         self.object_name = object_name
+        self.use_glob = use_glob
         self.poke_interval = poke_interval
         self.google_cloud_conn_id: str = google_cloud_conn_id
         self.hook_params = hook_params
@@ -63,6 +66,7 @@ class GCSBlobTrigger(BaseTrigger):
             {
                 "bucket": self.bucket,
                 "object_name": self.object_name,
+                "use_glob": self.use_glob,
                 "poke_interval": self.poke_interval,
                 "google_cloud_conn_id": self.google_cloud_conn_id,
                 "hook_params": self.hook_params,
@@ -98,9 +102,14 @@ class GCSBlobTrigger(BaseTrigger):
         async with ClientSession() as s:
             client = await hook.get_storage_client(s)
             bucket = client.get_bucket(bucket_name)
-            object_response = await bucket.blob_exists(blob_name=object_name)
-            if object_response:
-                return "success"
+            if self.use_glob:
+                list_blobs_response = await bucket.list_blobs(match_glob=object_name)
+                if len(list_blobs_response) > 0:
+                    return "success"
+            else:
+                blob_exists_response = await bucket.blob_exists(blob_name=object_name)
+                if blob_exists_response:
+                    return "success"
             return "pending"
 
 
@@ -209,6 +218,7 @@ class GCSCheckBlobUpdateTimeTrigger(BaseTrigger):
 class GCSPrefixBlobTrigger(GCSBlobTrigger):
     """
     Looks for objects in bucket matching a prefix.
+
     If none found, sleep for interval and check again. Otherwise, return matches.
 
     :param bucket: the bucket in the google cloud storage where the objects are residing.
@@ -233,6 +243,7 @@ class GCSPrefixBlobTrigger(GCSBlobTrigger):
             poke_interval=poke_interval,
             google_cloud_conn_id=google_cloud_conn_id,
             hook_params=hook_params,
+            use_glob=False,
         )
         self.prefix = prefix
 
@@ -287,14 +298,10 @@ class GCSPrefixBlobTrigger(GCSBlobTrigger):
 
 class GCSUploadSessionTrigger(GCSPrefixBlobTrigger):
     """
-    Checks for changes in the number of objects at prefix in Google Cloud Storage
-    bucket and returns Trigger Event if the inactivity period has passed with no
-    increase in the number of objects.
+    Return Trigger Event if the inactivity period has passed with no increase in the number of objects.
 
-    :param bucket: The Google Cloud Storage bucket where the objects are.
-        expected.
-    :param prefix: The name of the prefix to check in the Google cloud
-        storage bucket.
+    :param bucket: The Google Cloud Storage bucket where the objects are expected.
+    :param prefix: The name of the prefix to check in the Google cloud storage bucket.
     :param poke_interval: polling period in seconds to check
     :param inactivity_period: The total seconds of inactivity to designate
         an upload session is over. Note, this mechanism is not real time and
@@ -331,7 +338,7 @@ class GCSUploadSessionTrigger(GCSPrefixBlobTrigger):
         )
         self.inactivity_period = inactivity_period
         self.min_objects = min_objects
-        self.previous_objects = previous_objects if previous_objects else set()
+        self.previous_objects = previous_objects or set()
         self.inactivity_seconds = 0.0
         self.allow_delete = allow_delete
         self.last_activity_time: datetime | None = None
@@ -354,10 +361,7 @@ class GCSUploadSessionTrigger(GCSPrefixBlobTrigger):
         )
 
     async def run(self) -> AsyncIterator[TriggerEvent]:
-        """
-        Simple loop until no change in any new files or deleted in list blob is
-        found for the inactivity_period.
-        """
+        """Loop until no new files or deleted files in list blob for the inactivity_period."""
         try:
             hook = self._get_async_hook()
             while True:
@@ -373,16 +377,12 @@ class GCSUploadSessionTrigger(GCSPrefixBlobTrigger):
             yield TriggerEvent({"status": "error", "message": str(e)})
 
     def _get_time(self) -> datetime:
-        """
-        This is just a wrapper of datetime.datetime.now to simplify mocking in the
-        unittests.
-        """
+        """This is just a wrapper of datetime.datetime.now to simplify mocking in the unittests."""
         return datetime.now()
 
     def _is_bucket_updated(self, current_objects: set[str]) -> dict[str, str]:
         """
-        Checks whether new objects have been uploaded and the inactivity_period
-        has passed and updates the state of the sensor accordingly.
+        Check whether new objects have been uploaded and the inactivity_period has passed; update the state.
 
         :param current_objects: set of object ids in bucket during last check.
         """

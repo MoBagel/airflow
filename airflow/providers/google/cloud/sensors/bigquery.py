@@ -22,7 +22,8 @@ import warnings
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Sequence
 
-from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning
+from airflow.configuration import conf
+from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning, AirflowSkipException
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.google.cloud.triggers.bigquery import (
     BigQueryTableExistenceTrigger,
@@ -71,7 +72,7 @@ class BigQueryTableExistenceSensor(BaseSensorOperator):
         table_id: str,
         gcp_conn_id: str = "google_cloud_default",
         impersonation_chain: str | Sequence[str] | None = None,
-        deferrable: bool = False,
+        deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         **kwargs,
     ) -> None:
         if deferrable and "poke_interval" not in kwargs:
@@ -132,16 +133,24 @@ class BigQueryTableExistenceSensor(BaseSensorOperator):
     def execute_complete(self, context: dict[str, Any], event: dict[str, str] | None = None) -> str:
         """
         Callback for when the trigger fires - returns immediately.
-        Relies on trigger to throw an exception, otherwise it assumes execution was
-        successful.
+
+        Relies on trigger to throw an exception, otherwise it assumes execution was successful.
         """
         table_uri = f"{self.project_id}:{self.dataset_id}.{self.table_id}"
         self.log.info("Sensor checks existence of table: %s", table_uri)
         if event:
             if event["status"] == "success":
                 return event["message"]
+            # TODO: remove this if check when min_airflow_version is set to higher than 2.7.1
+            if self.soft_fail:
+                raise AirflowSkipException(event["message"])
             raise AirflowException(event["message"])
-        raise AirflowException("No event received in trigger callback")
+
+        # TODO: remove this if check when min_airflow_version is set to higher than 2.7.1
+        message = "No event received in trigger callback"
+        if self.soft_fail:
+            raise AirflowSkipException(message)
+        raise AirflowException(message)
 
 
 class BigQueryTablePartitionExistenceSensor(BaseSensorOperator):
@@ -184,7 +193,7 @@ class BigQueryTablePartitionExistenceSensor(BaseSensorOperator):
         partition_id: str,
         gcp_conn_id: str = "google_cloud_default",
         impersonation_chain: str | Sequence[str] | None = None,
-        deferrable: bool = False,
+        deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         **kwargs,
     ) -> None:
         if deferrable and "poke_interval" not in kwargs:
@@ -215,10 +224,7 @@ class BigQueryTablePartitionExistenceSensor(BaseSensorOperator):
         )
 
     def execute(self, context: Context) -> None:
-        """
-        Airflow runs this method on the worker and defers using the triggers
-        if deferrable is set to True.
-        """
+        """Airflow runs this method on the worker and defers using the triggers if deferrable is True."""
         if not self.deferrable:
             super().execute(context)
         else:
@@ -242,21 +248,35 @@ class BigQueryTablePartitionExistenceSensor(BaseSensorOperator):
     def execute_complete(self, context: dict[str, Any], event: dict[str, str] | None = None) -> str:
         """
         Callback for when the trigger fires - returns immediately.
-        Relies on trigger to throw an exception, otherwise it assumes execution was
-        successful.
+
+        Relies on trigger to throw an exception, otherwise it assumes execution was successful.
         """
         table_uri = f"{self.project_id}:{self.dataset_id}.{self.table_id}"
         self.log.info('Sensor checks existence of partition: "%s" in table: %s', self.partition_id, table_uri)
         if event:
             if event["status"] == "success":
                 return event["message"]
+
+            # TODO: remove this if check when min_airflow_version is set to higher than 2.7.1
+            if self.soft_fail:
+                raise AirflowSkipException(event["message"])
             raise AirflowException(event["message"])
-        raise AirflowException("No event received in trigger callback")
+
+        # TODO: remove this if check when min_airflow_version is set to higher than 2.7.1
+        message = "No event received in trigger callback"
+        if self.soft_fail:
+            raise AirflowSkipException(message)
+        raise AirflowException(message)
 
 
 class BigQueryTableExistenceAsyncSensor(BigQueryTableExistenceSensor):
     """
     Checks for the existence of a table in Google Big Query.
+
+    This class is deprecated and will be removed in a future release.
+
+    Please use :class:`airflow.providers.google.cloud.sensors.bigquery.BigQueryTableExistenceSensor`
+    and set *deferrable* attribute to *True* instead.
 
     :param project_id: The Google cloud project in which to look for the table.
        The connection supplied to the hook must provide
@@ -293,6 +313,11 @@ class BigQueryTableExistencePartitionAsyncSensor(BigQueryTablePartitionExistence
     """
     Checks for the existence of a partition within a table in Google BigQuery.
 
+    This class is deprecated and will be removed in a future release.
+
+    Please use :class:`airflow.providers.google.cloud.sensors.bigquery.BigQueryTablePartitionExistenceSensor`
+    and set *deferrable* attribute to *True* instead.
+
     :param project_id: The Google cloud project in which to look for the table.
        The connection supplied to the hook must provide
        access to the specified project.
@@ -318,7 +343,7 @@ class BigQueryTableExistencePartitionAsyncSensor(BigQueryTablePartitionExistence
         warnings.warn(
             "Class `BigQueryTableExistencePartitionAsyncSensor` is deprecated and "
             "will be removed in a future release. "
-            "Please use `BigQueryTableExistencePartitionSensor` and "
+            "Please use `BigQueryTablePartitionExistenceSensor` and "
             "set `deferrable` attribute to `True` instead",
             AirflowProviderDeprecationWarning,
         )

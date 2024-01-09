@@ -15,14 +15,15 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 """This module contains Google Vertex AI operators."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
 
 from google.api_core.exceptions import NotFound
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
-from google.api_core.retry import Retry
 from google.cloud.aiplatform import datasets
 from google.cloud.aiplatform.models import Model
 from google.cloud.aiplatform_v1.types.training_pipeline import TrainingPipeline
@@ -36,6 +37,8 @@ from airflow.providers.google.cloud.links.vertex_ai import (
 from airflow.providers.google.cloud.operators.cloud_base import GoogleCloudBaseOperator
 
 if TYPE_CHECKING:
+    from google.api_core.retry import Retry
+
     from airflow.utils.context import Context
 
 
@@ -49,6 +52,10 @@ class AutoMLTrainingJobBaseOperator(GoogleCloudBaseOperator):
         region: str,
         display_name: str,
         labels: dict[str, str] | None = None,
+        parent_model: str | None = None,
+        is_default_version: bool | None = None,
+        model_version_aliases: list[str] | None = None,
+        model_version_description: str | None = None,
         training_encryption_spec_key_name: str | None = None,
         model_encryption_spec_key_name: str | None = None,
         # RUN
@@ -66,6 +73,10 @@ class AutoMLTrainingJobBaseOperator(GoogleCloudBaseOperator):
         self.region = region
         self.display_name = display_name
         self.labels = labels
+        self.parent_model = parent_model
+        self.is_default_version = is_default_version
+        self.model_version_aliases = model_version_aliases
+        self.model_version_description = model_version_description
         self.training_encryption_spec_key_name = training_encryption_spec_key_name
         self.model_encryption_spec_key_name = model_encryption_spec_key_name
         # START Run param
@@ -80,10 +91,7 @@ class AutoMLTrainingJobBaseOperator(GoogleCloudBaseOperator):
         self.hook: AutoMLHook | None = None
 
     def on_kill(self) -> None:
-        """
-        Callback called when the operator is killed.
-        Cancel any running job.
-        """
+        """Callback called when the operator is killed; cancel any running job."""
         if self.hook:
             self.hook.cancel_auto_ml_job()
 
@@ -92,6 +100,7 @@ class CreateAutoMLForecastingTrainingJobOperator(AutoMLTrainingJobBaseOperator):
     """Create AutoML Forecasting Training job."""
 
     template_fields = (
+        "parent_model",
         "dataset_id",
         "region",
         "impersonation_chain",
@@ -160,11 +169,16 @@ class CreateAutoMLForecastingTrainingJobOperator(AutoMLTrainingJobBaseOperator):
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
         )
+        self.parent_model = self.parent_model.rpartition("@")[0] if self.parent_model else None
         model, training_id = self.hook.create_auto_ml_forecasting_training_job(
             project_id=self.project_id,
             region=self.region,
             display_name=self.display_name,
             dataset=datasets.TimeSeriesDataset(dataset_name=self.dataset_id),
+            parent_model=self.parent_model,
+            is_default_version=self.is_default_version,
+            model_version_aliases=self.model_version_aliases,
+            model_version_description=self.model_version_description,
             target_column=self.target_column,
             time_column=self.time_column,
             time_series_identifier_column=self.time_series_identifier_column,
@@ -204,6 +218,7 @@ class CreateAutoMLForecastingTrainingJobOperator(AutoMLTrainingJobBaseOperator):
         if model:
             result = Model.to_dict(model)
             model_id = self.hook.extract_model_id(result)
+            self.xcom_push(context, key="model_id", value=model_id)
             VertexAIModelLink.persist(context=context, task_instance=self, model_id=model_id)
         else:
             result = model  # type: ignore
@@ -216,6 +231,7 @@ class CreateAutoMLImageTrainingJobOperator(AutoMLTrainingJobBaseOperator):
     """Create Auto ML Image Training job."""
 
     template_fields = (
+        "parent_model",
         "dataset_id",
         "region",
         "impersonation_chain",
@@ -256,11 +272,16 @@ class CreateAutoMLImageTrainingJobOperator(AutoMLTrainingJobBaseOperator):
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
         )
+        self.parent_model = self.parent_model.rpartition("@")[0] if self.parent_model else None
         model, training_id = self.hook.create_auto_ml_image_training_job(
             project_id=self.project_id,
             region=self.region,
             display_name=self.display_name,
             dataset=datasets.ImageDataset(dataset_name=self.dataset_id),
+            parent_model=self.parent_model,
+            is_default_version=self.is_default_version,
+            model_version_aliases=self.model_version_aliases,
+            model_version_description=self.model_version_description,
             prediction_type=self.prediction_type,
             multi_label=self.multi_label,
             model_type=self.model_type,
@@ -284,6 +305,7 @@ class CreateAutoMLImageTrainingJobOperator(AutoMLTrainingJobBaseOperator):
         if model:
             result = Model.to_dict(model)
             model_id = self.hook.extract_model_id(result)
+            self.xcom_push(context, key="model_id", value=model_id)
             VertexAIModelLink.persist(context=context, task_instance=self, model_id=model_id)
         else:
             result = model  # type: ignore
@@ -296,6 +318,7 @@ class CreateAutoMLTabularTrainingJobOperator(AutoMLTrainingJobBaseOperator):
     """Create Auto ML Tabular Training job."""
 
     template_fields = (
+        "parent_model",
         "dataset_id",
         "region",
         "impersonation_chain",
@@ -353,6 +376,7 @@ class CreateAutoMLTabularTrainingJobOperator(AutoMLTrainingJobBaseOperator):
             impersonation_chain=self.impersonation_chain,
         )
         credentials, _ = self.hook.get_credentials_and_project_id()
+        self.parent_model = self.parent_model.rpartition("@")[0] if self.parent_model else None
         model, training_id = self.hook.create_auto_ml_tabular_training_job(
             project_id=self.project_id,
             region=self.region,
@@ -362,6 +386,10 @@ class CreateAutoMLTabularTrainingJobOperator(AutoMLTrainingJobBaseOperator):
                 project=self.project_id,
                 credentials=credentials,
             ),
+            parent_model=self.parent_model,
+            is_default_version=self.is_default_version,
+            model_version_aliases=self.model_version_aliases,
+            model_version_description=self.model_version_description,
             target_column=self.target_column,
             optimization_prediction_type=self.optimization_prediction_type,
             optimization_objective=self.optimization_objective,
@@ -395,6 +423,7 @@ class CreateAutoMLTabularTrainingJobOperator(AutoMLTrainingJobBaseOperator):
         if model:
             result = Model.to_dict(model)
             model_id = self.hook.extract_model_id(result)
+            self.xcom_push(context, key="model_id", value=model_id)
             VertexAIModelLink.persist(context=context, task_instance=self, model_id=model_id)
         else:
             result = model  # type: ignore
@@ -407,6 +436,7 @@ class CreateAutoMLTextTrainingJobOperator(AutoMLTrainingJobBaseOperator):
     """Create Auto ML Text Training job."""
 
     template_fields = [
+        "parent_model",
         "dataset_id",
         "region",
         "impersonation_chain",
@@ -441,6 +471,7 @@ class CreateAutoMLTextTrainingJobOperator(AutoMLTrainingJobBaseOperator):
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
         )
+        self.parent_model = self.parent_model.rpartition("@")[0] if self.parent_model else None
         model, training_id = self.hook.create_auto_ml_text_training_job(
             project_id=self.project_id,
             region=self.region,
@@ -461,11 +492,16 @@ class CreateAutoMLTextTrainingJobOperator(AutoMLTrainingJobBaseOperator):
             model_display_name=self.model_display_name,
             model_labels=self.model_labels,
             sync=self.sync,
+            parent_model=self.parent_model,
+            is_default_version=self.is_default_version,
+            model_version_aliases=self.model_version_aliases,
+            model_version_description=self.model_version_description,
         )
 
         if model:
             result = Model.to_dict(model)
             model_id = self.hook.extract_model_id(result)
+            self.xcom_push(context, key="model_id", value=model_id)
             VertexAIModelLink.persist(context=context, task_instance=self, model_id=model_id)
         else:
             result = model  # type: ignore
@@ -478,6 +514,7 @@ class CreateAutoMLVideoTrainingJobOperator(AutoMLTrainingJobBaseOperator):
     """Create Auto ML Video Training job."""
 
     template_fields = (
+        "parent_model",
         "dataset_id",
         "region",
         "impersonation_chain",
@@ -506,6 +543,7 @@ class CreateAutoMLVideoTrainingJobOperator(AutoMLTrainingJobBaseOperator):
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
         )
+        self.parent_model = self.parent_model.rpartition("@")[0] if self.parent_model else None
         model, training_id = self.hook.create_auto_ml_video_training_job(
             project_id=self.project_id,
             region=self.region,
@@ -523,11 +561,16 @@ class CreateAutoMLVideoTrainingJobOperator(AutoMLTrainingJobBaseOperator):
             model_display_name=self.model_display_name,
             model_labels=self.model_labels,
             sync=self.sync,
+            parent_model=self.parent_model,
+            is_default_version=self.is_default_version,
+            model_version_aliases=self.model_version_aliases,
+            model_version_description=self.model_version_description,
         )
 
         if model:
             result = Model.to_dict(model)
             model_id = self.hook.extract_model_id(result)
+            self.xcom_push(context, key="model_id", value=model_id)
             VertexAIModelLink.persist(context=context, task_instance=self, model_id=model_id)
         else:
             result = model  # type: ignore
@@ -537,8 +580,11 @@ class CreateAutoMLVideoTrainingJobOperator(AutoMLTrainingJobBaseOperator):
 
 
 class DeleteAutoMLTrainingJobOperator(GoogleCloudBaseOperator):
-    """Deletes an AutoMLForecastingTrainingJob, AutoMLImageTrainingJob, AutoMLTabularTrainingJob,
-    AutoMLTextTrainingJob, or AutoMLVideoTrainingJob.
+    """
+    Delete an AutoML training job.
+
+    Can be used with AutoMLForecastingTrainingJob, AutoMLImageTrainingJob,
+    AutoMLTabularTrainingJob, AutoMLTextTrainingJob, or AutoMLVideoTrainingJob.
     """
 
     template_fields = ("training_pipeline", "region", "project_id", "impersonation_chain")
@@ -588,7 +634,10 @@ class DeleteAutoMLTrainingJobOperator(GoogleCloudBaseOperator):
 
 
 class ListAutoMLTrainingJobOperator(GoogleCloudBaseOperator):
-    """Lists AutoMLForecastingTrainingJob, AutoMLImageTrainingJob, AutoMLTabularTrainingJob,
+    """
+    List an AutoML training job.
+
+    Can be used with AutoMLForecastingTrainingJob, AutoMLImageTrainingJob, AutoMLTabularTrainingJob,
     AutoMLTextTrainingJob, or AutoMLVideoTrainingJob in a Location.
     """
 

@@ -18,16 +18,13 @@
 """This module contains Google BigQuery to PostgreSQL operator."""
 from __future__ import annotations
 
-from typing import Sequence
-
 from airflow.providers.google.cloud.transfers.bigquery_to_sql import BigQueryToSqlBaseOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 
 class BigQueryToPostgresOperator(BigQueryToSqlBaseOperator):
     """
-    Fetches the data from a BigQuery table (alternatively fetch data for selected columns)
-    and insert that data into a PostgreSQL table.
+    Fetch data from a BigQuery table (alternatively fetch selected columns) and insert into PostgreSQL table.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -36,11 +33,6 @@ class BigQueryToPostgresOperator(BigQueryToSqlBaseOperator):
     :param target_table_name: target Postgres table (templated)
     :param postgres_conn_id: Reference to :ref:`postgres connection id <howto/connection:postgres>`.
     """
-
-    template_fields: Sequence[str] = tuple(BigQueryToSqlBaseOperator.template_fields) + (
-        "dataset_id",
-        "table_id",
-    )
 
     def __init__(
         self,
